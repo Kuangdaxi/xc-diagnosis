@@ -653,8 +653,8 @@ const UI = (() => {
     setTimeout(()=>{ t.style.opacity="0"; t.style.transition="opacity .25s"; setTimeout(()=>t.remove(),250); }, ms);
   }
   function modal({ title="", bodyHTML="", footerHTML="", onMount } = {}){
+    document.getElementById("modal-root").innerHTML = "";
     const root = el(`<div class="modal-overlay"><div class="modal" role="dialog" aria-modal="true"><div class="modal-head"><h3>${escapeHtml(title)}</h3><button class="btn btn-ghost btn-sm" data-act="close">✕</button></div><div class="modal-body">${bodyHTML}</div>${footerHTML?`<div class="modal-foot">${footerHTML}</div>`:""}</div></div>`);
-    document.getElementById("modal-root").appendChild(root);
     const close = ()=>{ root.remove(); };
     root.addEventListener("click", e=>{ if (e.target===root || e.target.closest('[data-act="close"]')) close(); });
     document.addEventListener("keydown", function esc(e){ if (e.key==="Escape"){ close(); document.removeEventListener("keydown", esc); } });
