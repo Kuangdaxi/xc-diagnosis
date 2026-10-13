@@ -5,7 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="theme-color" content="#0f1420" />
-<title>行测错题诊断</title>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+<meta http-equiv="Pragma" content="no-cache" />
+<meta http-equiv="Expires" content="0" />
+<title>行测错题诊断 v4</title>
 <style>
 /* ============================================================
    行测错题诊断 · 设计系统（内嵌）
@@ -743,6 +746,10 @@ const App = (() => {
               <input type="file" id="q-file" accept="image/*" />
             </label>
             <div id="img-preview"></div>
+            <div id="ocr-btn-wrap" style="display:none;margin-top:10px;">
+              <button class="btn btn-primary" data-act="ocr-extract" style="width:100%;background:linear-gradient(135deg,#4f9cf9,#7c3aed);border:none;">📷 OCR 识别图片中的文字（自动填入题目框）</button>
+              <div id="ocr-status" style="margin-top:8px;font-size:12px;color:var(--text-dim);"></div>
+            </div>
           </div>
         </div>
         <div>
@@ -816,6 +823,7 @@ const App = (() => {
         UI.toast("API Key 已保存，开始调用联网 AI…","success"); callOnlineAI();
       }
       if (e.target.closest('[data-act="ai-save-cancel"]')){ document.querySelector(".modal-overlay")?.remove(); }
+      if (e.target.closest('[data-act="ocr-extract"]')) runOCR();
     });
     if (addState.text.trim()) runAnalysis();
   }
@@ -823,12 +831,64 @@ const App = (() => {
   function handleFile(file){
     if (!file) return;
     if (!file.type.startsWith("image/")){ UI.toast("请上传图片文件","error"); return; }
-    UI.fileToDataURL(file).then(dataURL=>{ addState.image=dataURL; renderImgPreview(); UI.toast("截图已加载","success",1400); }).catch(err=>UI.toast(err.message||"上传失败","error"));
+    UI.fileToDataURL(file).then(dataURL=>{ addState.image=dataURL; renderImgPreview(); $("#ocr-btn-wrap").style.display=""; $("#ocr-status").innerText=""; UI.toast("截图已加载，可点下方按钮识别文字","success",1800); }).catch(err=>UI.toast(err.message||"上传失败","error"));
   }
   function renderImgPreview(){
     const box = $("#img-preview"); if (!box) return;
-    if (!addState.image){ box.innerHTML=""; return; }
+    if (!addState.image){ box.innerHTML=""; $("#ocr-btn-wrap").style.display="none"; return; }
     box.innerHTML = `<div class="img-wrap"><img class="preview-img" src="${addState.image}" alt="错题截图" /><button class="rm" data-act="remove-img" title="移除">✕</button></div>`;
+  }
+
+  // === OCR 图片文字识别 ===
+  let tesseractLoader = null;
+  async function loadTesseract(){
+    if (tesseractLoader) return tesseractLoader;
+    tesseractLoader = new Promise((resolve,reject)=>{
+      if (window.Tesseract){ resolve(window.Tesseract); return; }
+      const s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js";
+      s.onload = ()=>resolve(window.Tesseract);
+      s.onerror = ()=>reject(new Error("Tesseract.js 加载失败，请检查网络"));
+      document.head.appendChild(s);
+    });
+    return tesseractLoader;
+  }
+  async function runOCR(){
+    if (!addState.image){ UI.toast("请先上传图片","warn"); return; }
+    const status = $("#ocr-status");
+    const btn = document.querySelector('[data-act="ocr-extract"]');
+    if (btn) btn.disabled = true;
+    try {
+      status.innerText = "正在加载 OCR 引擎…（首次需下载约 2MB）";
+      const Tesseract = await loadTesseract();
+      status.innerText = "正在识别图片文字…（中文识别需 10-30 秒）";
+      const result = await Tesseract.recognize(addState.image, "chi_sim+eng", {
+        logger: m => {
+          if (m.status === "recognizing text"){
+            status.innerText = `正在识别… ${Math.round(m.progress*100)}%`;
+          } else if (m.status === "loading tesseract core"){
+            status.innerText = `加载识别引擎… ${Math.round(m.progress*100)}%`;
+          } else if (m.status === "loading language traineddata"){
+            status.innerText = `加载中文语言包… ${Math.round(m.progress*100)}%`;
+          }
+        }
+      });
+      const text = (result?.data?.text || "").replace(/\n{3,}/g, "\n\n").trim();
+      if (!text){ status.innerText = "⚠️ 未能识别出文字，请确认图片清晰度"; return; }
+      const ta = $("#q-text");
+      const existing = (ta.value||"").trim();
+      ta.value = existing ? existing + "\n\n" + text : text;
+      addState.text = ta.value;
+      status.innerHTML = `✅ 识别完成！<span style="color:var(--success);">${text.length}</span> 字已填入题目框`;
+      UI.toast("OCR 识别成功！","success");
+      runAnalysis();
+      triggerAI();
+    } catch(e) {
+      status.innerText = "❌ 识别失败：" + (e.message||"未知错误") + "（可尝试上传更清晰的图片，或直接手动输入文字）";
+      UI.toast("OCR 失败："+(e.message||""),"error");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
   function runAnalysis(){
     const text = addState.text.trim();
