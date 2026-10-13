@@ -157,114 +157,15 @@ textarea{resize:vertical;min-height:120px;line-height:1.6}
 .text-center{text-align:center}
 </style>
 </head>
+
 <body>
-<div id="app"></div>
-<div id="toast-container" class="toast-container"></div>
-<div id="modal-root"></div>
-
+  <div id="app"></div>
 <script>
-/* ============================================================
- * data.js — 行测错题诊断知识库
- * ============================================================ */
-const MODULES = {
-  speech: { key:"speech", name:"言语理解", short:"言语", color:"var(--m-speech)", icon:"📖" },
-  judge:  { key:"judge",  name:"判断推理", short:"判断", color:"var(--m-judge)",  icon:"🧩" },
-  data:   { key:"data",   name:"资料分析", short:"资料", color:"var(--m-data)",   icon:"📊" },
-  quant:  { key:"quant",  name:"数量关系", short:"数量", color:"var(--m-quant)",  icon:"🔢" },
-  common: { key:"common", name:"常识判断", short:"常识", color:"var(--m-common)", icon:"🌍" },
-};
 
-const SUBTYPES = [
-  { type:"logic_fill", module:"speech", name:"逻辑填空",
-    logic:"结合语境与逻辑关系（转折、递进、并列、因果）判断空缺处词义，需辨析近义词的侧重点与搭配习惯。",
-    pits:["只看选项词义相近就盲选，忽略上下文逻辑关系（尤其转折后才是重点）","未辨析近义词的语意轻重 / 感情色彩 / 搭配对象差异","第二个空被第一个空带偏，应整体代入验证"] },
-  { type:"fragment_read", module:"speech", name:"片段阅读",
-    logic:"找主旨句，关注关联词（但、因此、可见、也就是说）后的总结性表述；区分主旨与细节。",
-    pits:["把举例 / 列数据当主旨，主旨往往是举例后的结论","选了表述片面或过度引申的选项，主旨应概括全面","主观臆断，选项内容脱离原文凭常识选"] },
-  { type:"sentence_order", module:"speech", name:"语句排序 / 衔接",
-    logic:"通过指代词、关联词、时间顺序、话题一致性确定首句与邻接关系，再验证整体脉络。",
-    pits:["凭语感通读排序，未抓指代词（这、其、该）与关联词（然而、因此）的逻辑钩子","首句判断错，导致后续连锁错误"] },
-
-  { type:"graphic", module:"judge", name:"图形推理",
-    logic:"观察数量规律（点、线、面、素、角、点线一笔画）与位置规律（平移、旋转、翻转、对称）。",
-    pits:["死盯一种规律（如只数线条），忽略面的数量 / 对称性 / 一笔画（奇点数）","位置类题目未分组观察（如奇偶项规律不同）","立体图形忽略公共面、相对面、相邻面关系"] },
-  { type:"definition", module:"judge", name:"定义判断",
-    logic:"提取定义要件（主体、客体、条件、方式、目的、结果），逐要件与选项比对，要件不符即排除。",
-    pits:["未拆解要件，凭感觉整体匹配","选项符合部分要件就选，遗漏关键否定要件（如'不包含''仅限'）","混淆'符合定义'与'属于该类对象'，主体错位"] },
-  { type:"analogy", module:"judge", name:"类比推理",
-    logic:"判断词项间关系（全同、包含、交叉、并列、属性、功能、对应），再结合二级辨析（方向、程度、范畴）。",
-    pits:["只看一级关系（都是并列），忽略二级辨析（自然 vs 人造、必然 vs 或然）","关系方向反了（如'包含'与'被包含'）","题干是必然关系，选项却选了或然关系"] },
-  { type:"logic_judge", module:"judge", name:"逻辑判断（削弱加强/朴素逻辑）",
-    logic:"找论证结构（论点-论据-论证），削弱优先否论据、断桥、他因、否论点；加强优先搭桥、补充论据。",
-    pits:["把'削弱论据'当最强削弱，实际'断桥（切断论据与论点联系）'力度更强","可能性推理选了'无关项'或'诉诸权威'选项","朴素逻辑未充分利用确定信息（如'每个人都说了一半真话'这类约束）"] },
-
-  { type:"data_growth", module:"data", name:"增长 / 增长率",
-    logic:"区分增长量（绝对值）与增长率（相对值），熟记公式：增长率=（现期-基期）/基期；年均增长率用开方修正。",
-    pits:["增长量与增长率混淆，看错问的是'增长多少'还是'增长百分之几'","把'同比'（与上年同期）当'环比'（与上一期）","计算年均增长率时漏开 n 次方或 n 取错期数"] },
-  { type:"data_ratio", module:"data", name:"比重 / 倍数 / 平均数",
-    logic:"现期比重=部分/整体；比重变化需用部分增长率与整体增长率比较判断升降。",
-    pits:["比重与比重变化量混淆：后者需用 (部分率-整体率)/(1+部分率)×现期比重 计算","平均数（如人均产量）把'总数/总人数'的分子分母写反","倍数题把'A是B几倍'（A/B）算成'A比B多几倍'（A/B-1）"] },
-  { type:"data_comprehensive", module:"data", name:"综合分析（说法判断）",
-    logic:"逐项验证四个说法的正确性，优先验证带'约、最、均、首'等绝对表述或易定位数据的说法。",
-    pits:["四个说法逐字硬算耗时，应优先验证易排除项（数据明显不符 / 表述绝对化）","把'正确的是'与'错误的是'看反","材料单位（万、亿、%）换算出错"] },
-
-  { type:"math_op", module:"quant", name:"数学运算",
-    logic:"优先代入排除、特值、方程、比例法；行程、工程、利润、排列组合、概率分类套用模型。",
-    pits:["硬算不优先用代入排除 / 特值法，耗时且易错","行程问题未分清'相遇/追及'，或漏算往返时间","排列组合混淆'有序排列A'与'无序组合C'，或重复/遗漏","概率题漏乘或错把'至少一个'用对立事件简化"] },
-  { type:"number_seq", module:"quant", name:"数字推理",
-    logic:"观察作差、作商、作和、分组（交叉、两两分组）、递推（倍数±常数、平方/立方修正）。",
-    pits:["只作一次差，未作二次差或多级差","未尝试交叉数列（奇数项与偶数项分别成规律）","忽略分数 / 小数数列与多次方数列（如 2,3,10 取近幂修正）"] },
-
-  { type:"common_politics", module:"common", name:"政治 / 时政",
-    logic:"识记最新重大会议、政策表述、根本/基本制度的准确表述，注意'最''根本''基本'等限定。",
-    pits:["把'根本制度'与'基本制度'混淆（如根本政治制度是人大制度）","时政表述记不精准，多字少字失分"] },
-  { type:"common_law", module:"common", name:"法律",
-    logic:"依宪法、民法典、刑法、行政法等法条判断，注意主体适格、程序正当、时效与例外规定。",
-    pits:["凭朴素的'公平感'判断，忽略法条具体规定（如诉讼时效、刑事责任年龄）","混淆'应当'（必须）与'可以'（授权）","宪法题把国家机构职权张冠李戴"] },
-  { type:"common_other", module:"common", name:"经济 / 科技 / 人文 / 国情",
-    logic:"广覆盖识记题，结合排除法：绝对化表述（都、一定、只有）多为错项。",
-    pits:["绝对化表述未优先怀疑（'所有''唯一''必然'常为错）","经济题混淆 GDP 与 GNP、CPI 与 PPI","历史人物 / 成就对应记串（如把某发明安错朝代）"] },
-];
-
-const SUBTYPE_MAP = SUBTYPES.reduce((m,s)=>(m[s.type]=s,m),{});
-
-const RULES = [
-  { module:"speech", type:"logic_fill", keywords:["填入横线","填入划线","最恰当的一项","依次填入","最合适的是","恰当的是","横线处"], reason:"出现'填入/横线/恰当'等标志词，属逻辑填空" },
-  { module:"speech", type:"fragment_read", keywords:["这段文字意在说明","意在强调","主要说明","概括最准确","根据这段文字","这段话主要","对这段文字","作者意在","这段文字主要"], reason:"问'这段文字意在/主要/概括'，属片段阅读主旨题" },
-  { module:"speech", type:"sentence_order", keywords:["排序","语序正确","衔接最恰当","填入文中","接下来最有可能","语句顺序"], reason:"出现'排序/语序/衔接'，属语句排序或衔接" },
-
-  { module:"judge", type:"graphic", keywords:["图形","下列选项中","规律的是","问号处","九宫格","立体图形","折叠","展开图"], reason:"题干描述图形 / 规律 / 折叠，属图形推理" },
-  { module:"judge", type:"definition", keywords:["定义","属于","不属于","符合定义","根据上述定义","定义给定的"], reason:"出现'定义/属于/符合定义'，属定义判断" },
-  { module:"judge", type:"analogy", keywords:["之于","对于","相当于","类比","关系最接近","关系最为贴近"], reason:"出现'之于/相当于/类比'，属类比推理" },
-  { module:"judge", type:"logic_judge", keywords:["削弱","加强","支持","质疑","反驳","前提","由此可以推出","以下哪项为真","假设","论证","最能解释"], reason:"出现'削弱/加强/前提/推出/论证'，属逻辑判断" },
-
-  { module:"data", type:"data_growth", keywords:["增长率","增长了","增长速度","同比","环比","年均增长","增速","增幅"], reason:"问增长 / 增速 / 同比环比，属资料分析-增长" },
-  { module:"data", type:"data_ratio", keywords:["比重","占比","倍数","是几倍","多几倍","平均","人均","每万","占"], reason:"问比重 / 倍数 / 平均，属资料分析-比重倍数平均" },
-  { module:"data", type:"data_comprehensive", keywords:["能够从资料","根据所给资料","以下说法正确","以下说法错误","能够推出","无法判断"], reason:"问'说法正确/错误/无法推出'，属资料分析-综合判断" },
-
-  { module:"quant", type:"math_op", keywords:["甲乙","同时出发","多少","比例","概率","排列","组合","至少","至多","完成","工程","利润","成本","行程","速度","多少天","多少个","方程"], reason:"含'甲乙/出发/概率/排列/利润/工程'等，属数学运算" },
-  { module:"quant", type:"number_seq", keywords:["数列","下一个","填入数列","规律填数","括号处应填"], reason:"出现'数列/下一个/规律填数'，属数字推理" },
-
-  { module:"common", type:"common_politics", keywords:["根本制度","基本制度","宪法","全国人大","人民代表大会","宗旨","执政","习近平","中国特色","新时代","建设","二十大","十九大"], reason:"涉制度 / 时政表述，属常识-政治" },
-  { module:"common", type:"common_law", keywords:["刑法","民事","诉讼","权利","义务","合同","婚姻","继承","行政处罚","犯罪","判决","法条","效力"], reason:"涉法律 / 权利义务 / 诉讼，属常识-法律" },
-  { module:"common", type:"common_other", keywords:["GDP","GNP","CPI","经济","下列说法正确","下列表述","历史","朝代","发明","科技","地理","气候","文化","作者","作品"], reason:"涉经济科技人文国情，属常识-其他" },
-];
-
-const MODULE_FALLBACK = {
-  speech:["阅读","文字","词语","语意","语境"],
-  judge:["推理","推演","规律","逻辑","判断"],
-  data:["资料","材料","图表","统计","万人","亿元","占比"],
-  quant:["计算","求解","等于","多少","个","天","米","件"],
-  common:["常识","下列","说法","表述","正确的是"],
-};
-
-window.XC = window.XC || {};
-Object.assign(window.XC, { MODULES, SUBTYPES, SUBTYPE_MAP, RULES, MODULE_FALLBACK });
-
-/* ============================================================
- * analyzer.js
- * ============================================================ */
-
+(function(){
+  if (!Element.prototype.matches) Element.prototype.matches = Element.prototype.msMatchesSelector || Element.prototype.webkitMatchesSelector;
+  if (!Element.prototype.closest) Element.prototype.closest = function(s){ if(!document.documentElement.contains(this)) return null; if(this.matches(s)) return this; if(this.parentElement) return this.parentElement.closest(s); return null; };
+})();
 
 const Analyzer = (() => {
   const MODULES = [
@@ -310,15 +211,11 @@ const UI = (() => {
     document.body.appendChild(t); setTimeout(()=>{ t.style.opacity="0"; setTimeout(()=>t.remove(),200); }, dur);
   }
   function modal({ title="", bodyHTML="", footerHTML="", onMount=null }){
-    const closeBtn = `<button class="btn" data-close-modal style="padding:8px 16px;border-radius:6px;background:var(--bg-soft);color:var(--text);border:none;cursor:pointer;">关闭</button>`;
-    const overlay = el(`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9998;display:flex;align-items:center;justify-content:center;padding:20px;"><div style="background:var(--bg);border-radius:12px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3);"><div style="padding:16px 20px;border-bottom:1px solid var(--border);font-weight:600;">${escapeHtml(title)}</div><div style="padding:20px;">${bodyHTML}</div><div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;">${footerHTML||closeBtn}</div></div></div>`);
+    const overlay = el(`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9998;display:flex;align-items:center;justify-content:center;padding:20px;"><div style="background:var(--bg);border-radius:12px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3);"><div style="padding:16px 20px;border-bottom:1px solid var(--border);font-weight:600;">${escapeHtml(title)}</div><div style="padding:20px;">${bodyHTML}</div><div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;">${footerHTML||'<button data-close-modal style="padding:8px 16px;border-radius:6px;background:var(--bg-soft);color:var(--text);border:none;cursor:pointer;">关闭</button>'}</div></div></div>`);
     document.body.appendChild(overlay);
     const close = ()=> overlay.remove();
     if (onMount) onMount(overlay, close);
-    overlay.addEventListener("click", e=>{
-      if (e.target === overlay) close();
-      if (e.target.matches("[data-close-modal]")) close();
-    });
+    overlay.addEventListener("click", e=>{ if (e.target === overlay || e.target.matches("[data-close-modal]")) close(); });
     return { close, overlay };
   }
   function moduleTag(id){ const m = Analyzer.MODULES.find(m=>m.id===id); return m ? `<span style="padding:2px 8px;border-radius:10px;font-size:11px;background:${m.color}20;color:${m.color};">${m.name}</span>` : ""; }
@@ -346,12 +243,6 @@ const UI = (() => {
     return new Date(ts).toLocaleDateString();
   }
   return { el, escapeHtml, toast, modal, moduleTag, subtypeTag, moduleOptions, subtypeOptions, fileToDataURL, timeAgo };
-})();
-
-// polyfill
-(function(){
-  if (!Element.prototype.matches) Element.prototype.matches = Element.prototype.msMatchesSelector || Element.prototype.webkitMatchesSelector;
-  if (!Element.prototype.closest) Element.prototype.closest = function(s){ if(!document.documentElement.contains(this)) return null; if(this.matches(s)) return this; if(this.parentElement) return this.parentElement.closest(s); return null; };
 })();
 
 const App = (() => {
@@ -532,7 +423,7 @@ ${txt}
         <div class="form-row"><label>我的错误原因</label><textarea id="d-note">${UI.escapeHtml(r.note||"")}</textarea></div>
         <div class="form-row"><label>AI 深度解析（粘贴新的）</label><textarea id="d-analysis" style="min-height:120px;">${UI.escapeHtml(r.analysis||"")}</textarea></div>
       </div>`;
-    UI.modal({ title:"📖 错题详情", bodyHTML: body, footerHTML:`<button class="btn" data-del>删除</button><button class="btn btn-primary" data-save>保存修改</button>`,
+    UI.modal({ title:"📖 错题详情", bodyHTML: body, footerHTML:`<button data-del style="padding:8px 16px;border-radius:6px;background:#ff4d4f;color:#fff;border:none;cursor:pointer;">删除</button><button data-save style="padding:8px 16px;border-radius:6px;background:var(--primary);color:#fff;border:none;cursor:pointer;">保存修改</button>`,
       onMount(root) {
         root.addEventListener("click", e=>{
           if (e.target.matches("[data-del]")){ if(confirm("确认删除这道错题？")){ Store.remove(r.id); UI.toast("已删除","success"); root.querySelector("[data-close-modal]")?.click(); renderList(); } }
@@ -581,7 +472,7 @@ ${txt}
         </div>
       </div>
       <div style="text-align:center;margin-top:20px;">
-        <button style="padding:8px 20px;border-radius:6px;background:#ff4d4f;color:#fff;border:none;cursor:pointer;" onclick="if(confirm('确认清空所有错题？此操作不可恢复！')){Store.clear();UI.toast('已清空','success');render();}">🗑️ 清空全部错题</button>
+        <button onclick="if(confirm('确认清空所有错题？此操作不可恢复！')){Store.clear();UI.toast('已清空','success');render();}" style="padding:8px 20px;border-radius:6px;background:#ff4d4f;color:#fff;border:none;cursor:pointer;">🗑️ 清空全部错题</button>
       </div>`}
     `;
   }
@@ -599,3 +490,7 @@ ${txt}
 })();
 
 document.addEventListener("DOMContentLoaded", ()=>{ App.render(); });
+
+</script>
+</body>
+</html>
