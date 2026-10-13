@@ -948,8 +948,18 @@ const App = (() => {
         <p class="muted" style="margin:0 0 12px;font-size:12px;">最简单的方式：注册 <a href="https://cloud.siliconflow.cn/" target="_blank" style="color:var(--primary);">硅基流动</a>（免费送额度），创建 API Key 粘贴到下方。</p>
         <label style="font-size:13px;color:var(--text-dim);">API Key</label>
         <input id="vision-key" placeholder="sk-xxxxxx" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin:4px 0 10px;" />
-        <label style="font-size:13px;color:var(--text-dim);">模型（默认 Qwen2.5-VL）</label>
-        <input id="vision-model" value="${localStorage.getItem('xc_api_vision_model')||'Qwen/Qwen2.5-VL-7B-Instruct'}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin:4px 0 10px;font-size:12px;" />
+        <label style="font-size:13px;color:var(--text-dim);">视觉模型（选一个能用的）</label>
+        <select id="vision-model" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin:4px 0 10px;font-size:12px;background:var(--bg-soft);color:var(--text);">
+          ${(()=>{ const cur = localStorage.getItem("xc_api_vision_model")||""; const opts = [
+            "Qwen/Qwen3.5-9B",
+            "Qwen/Qwen2.5-VL-7B-Instruct",
+            "Qwen/Qwen3-VL-8B-Instruct",
+            "Qwen/Qwen3-VL-32B-Thinking",
+            "deepseek-ai/DeepSeek-VL2",
+            "THUDM/glm-4v-9b",
+          ]; const curSel = cur || opts[0]; return opts.map(o=>`<option value="${o}" ${o===curSel?'selected':''}>${o}</option>`).join("") + (cur && !opts.includes(cur)?`<option value="${cur}" selected>${cur}</option>`:""); })()}
+        </select>
+        <p class="muted" style="margin:4px 0 8px;font-size:11px;">💡 如果报 400，换一个试试。Qwen3.5-9B 是最新通用多模态。</p>
         <p class="muted" style="margin:8px 0 0;font-size:11px;">💡 已填过 API Key？直接点下方"设置 API Key + 联网解析"按钮复用。</p>
       </div>`, footerHTML:`<button class="btn" data-act="vision-cancel">取消</button><button class="btn btn-primary" data-act="vision-save">保存并解析</button>` }); return; }
     const endpoint = localStorage.getItem("xc_api_endpoint") || "https://api.siliconflow.cn/v1/chat/completions";
