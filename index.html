@@ -348,100 +348,160 @@ ${txt}
 
 
   function exportWord(){
-    if (typeof docx === 'undefined'){ UI.toast('docx库未加载，请刷新页面','warn'); return; }
+    if (typeof docx === 'undefined'){ UI.toast('docx库未加载，请刷新页面后重试','warn'); return; }
     const recs = Store.getAll();
-    if (!recs.length){ UI.toast('错题本为空','warn'); return; }
+    if (!recs.length){ UI.toast('错题本为空，没有可导出的内容','warn'); return; }
     const modF = document.getElementById('filter-module')?.value || '';
     const schF = (document.getElementById('filter-search')?.value || '').trim().toLowerCase();
     let list = recs;
     if (modF) list = list.filter(r=>r.module===modF);
     if (schF) list = list.filter(r=>(r.text||'').toLowerCase().includes(schF) || (r.note||'').toLowerCase().includes(schF) || (r.analysis||'').toLowerCase().includes(schF));
-    if (!list.length){ UI.toast('筛选后无错题','warn'); return; }
+    if (!list.length){ UI.toast('当前筛选条件下没有错题','warn'); return; }
 
-    const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType } = docx;
+    // 反馈：按钮 loading + 禁用
+    const btn = document.querySelector('[data-act="export-word"]');
+    const btnText = btn ? btn.textContent : '';
+    if (btn){ btn.disabled = true; btn.textContent = '正在生成…'; }
 
-    const children = [];
-    // 标题
-    children.push(new Paragraph({
-      heading: HeadingLevel.HEADING_1,
-      alignment: AlignmentType.CENTER,
-      children: [new TextRun({ text: '行测错题本', bold: true, size: 48 })]
-    }));
-    children.push(new Paragraph({
-      alignment: AlignmentType.CENTER,
-      children: [new TextRun({ text: `导出时间：${new Date().toLocaleString('zh-CN')} | 共 ${list.length} 题`, size: 20, color: '666666' })]
-    }));
-    children.push(new Paragraph({ children: [] }));
+    try {
+      const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, PageSize, convertMillimetersToTwip } = docx;
 
-    // 统计
-    const byModule = {};
-    list.forEach(r=>{ byModule[r.module] = (byModule[r.module]||0)+1; });
-    const statLines = Object.entries(byModule).map(([m,c])=>`${m}：${c}题`).join('  ');
-    children.push(new Paragraph({
-      children: [new TextRun({ text: '模块统计：', bold: true, size: 22 }), new TextRun({ text: statLines, size: 22 })]
-    }));
-    children.push(new Paragraph({ children: [] }));
+      const FONT = '宋体';
+      const children = [];
 
-    // 每道题
-    list.forEach((r,i)=>{
+      // ---- 封面标题 ----
       children.push(new Paragraph({
-        heading: HeadingLevel.HEADING_2,
-        children: [new TextRun({ text: `${i+1}. [${r.module||'未分类'}] ${r.subtype||''}`, bold: true, size: 28 })]
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 240 },
+        children: [new TextRun({ text: '行 测 错 题 本', bold: true, size: 56, font: FONT })]
       }));
-      if (r.text){
-        children.push(new Paragraph({
-          children: [new TextRun({ text: '【题目】', bold: true, size: 22 })]
-        }));
-        r.text.split('
-').forEach(line=>{
-          children.push(new Paragraph({
-            indent: { left: 360 },
-            children: [new TextRun({ text: line, size: 22 })]
-          }));
-        });
-      }
-      const ansPara = [];
-      if (r.myAnswer) ansPara.push(new TextRun({ text: `❌ 我的答案：${r.myAnswer}  `, color: 'cf1322', size: 22 }));
-      if (r.correctAnswer) ansPara.push(new TextRun({ text: `✅ 正确答案：${r.correctAnswer}`, color: '389e0d', size: 22, bold: true }));
-      if (ansPara.length){
-        children.push(new Paragraph({ children: ansPara }));
-      }
-      if (r.note){
-        children.push(new Paragraph({
-          children: [new TextRun({ text: '【我的错误原因】', bold: true, size: 22, color: 'd48806' })]
-        }));
-        r.note.split('
-').forEach(line=>{
-          children.push(new Paragraph({
-            indent: { left: 360 },
-            children: [new TextRun({ text: line, size: 22, color: 'd48806' })]
-          }));
-        });
-      }
-      if (r.analysis){
-        children.push(new Paragraph({
-          children: [new TextRun({ text: '【AI 深度解析】', bold: true, size: 22, color: '2f54eb' })]
-        }));
-        r.analysis.split('
-').forEach(line=>{
-          children.push(new Paragraph({
-            indent: { left: 360 },
-            children: [new TextRun({ text: line, size: 22 })]
-          }));
-        });
-      }
+      children.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 120 },
+        children: [new TextRun({ text: `导出时间：${new Date().toLocaleString('zh-CN')}`, size: 20, color: '666666', font: FONT })]
+      }));
+      children.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 360 },
+        children: [new TextRun({ text: `共 ${list.length} 道错题`, size: 22, color: '333333', font: FONT })]
+      }));
       children.push(new Paragraph({ children: [] }));
-    });
 
-    const doc = new Document({
-      styles: { default: { document: { run: { font: '宋体', size: 24 } } } },
-      sections: [{ children }]
-    });
+      // ---- 模块统计 ----
+      const byModule = {};
+      list.forEach(r=>{ byModule[r.module] = (byModule[r.module]||0)+1; });
+      const statText = Object.entries(byModule)
+        .map(([mid,c])=>{ const m = Analyzer.MODULES.find(x=>x.id===mid); return (m?m.name:mid) + '：' + c + ' 题'; })
+        .join('    ');
+      children.push(new Paragraph({
+        spacing: { after: 80 },
+        children: [new TextRun({ text: '▎模块统计', bold: true, size: 24, font: FONT })]
+      }));
+      children.push(new Paragraph({
+        spacing: { after: 300 },
+        children: [new TextRun({ text: statText || '无', size: 22, font: FONT })]
+      }));
 
-    Packer.toBlob(doc).then(blob=>{
-      saveAs(blob, `行测错题本_${new Date().toISOString().slice(0,10)}.docx`);
-      UI.toast('✅ 导出成功','success');
-    }).catch(e=>{ UI.toast('导出失败：'+e.message,'warn'); });
+      // ---- 每道题 ----
+      list.forEach((r, i)=>{
+        const m = Analyzer.MODULES.find(x=>x.id===r.module);
+        const s = (m?.subtypes||[]).find(x=>x.id===r.subtype);
+        const headLabel = `${i+1}. [${m?m.name:(r.module||'未分类')}]${s?' · '+s.name:''}`;
+
+        // 题目标题
+        children.push(new Paragraph({
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 240, after: 120 },
+          children: [new TextRun({ text: headLabel, bold: true, size: 26, font: FONT })]
+        }));
+
+        // 题目正文
+        if (r.text){
+          children.push(new Paragraph({
+            spacing: { before: 60, after: 60 },
+            children: [new TextRun({ text: '【题目】', bold: true, size: 22, font: FONT })]
+          }));
+          r.text.split(/\r?\n/).forEach(line=>{
+            children.push(new Paragraph({
+              indent: { firstLine: 440 },
+              spacing: { after: 40 },
+              children: [new TextRun({ text: line || '　', size: 22, font: FONT })]
+            }));
+          });
+        }
+
+        // 答案行
+        const ansPara = [];
+        if (r.myAnswer) ansPara.push(new TextRun({ text: '❌ 我的答案：' + r.myAnswer + '   ', color: 'cf1322', size: 22, font: FONT }));
+        if (r.correctAnswer) ansPara.push(new TextRun({ text: '✅ 正确答案：' + r.correctAnswer, color: '389e0d', size: 22, bold: true, font: FONT }));
+        if (ansPara.length){
+          children.push(new Paragraph({ spacing: { before: 120, after: 60 }, children: ansPara }));
+        }
+
+        // 我的错误原因
+        if (r.note){
+          children.push(new Paragraph({
+            spacing: { before: 100, after: 40 },
+            children: [new TextRun({ text: '【我的错误原因】', bold: true, size: 22, color: 'd48806', font: FONT })]
+          }));
+          r.note.split(/\r?\n/).forEach(line=>{
+            children.push(new Paragraph({
+              indent: { firstLine: 440 },
+              spacing: { after: 40 },
+              children: [new TextRun({ text: line || '　', size: 22, color: '874d00', font: FONT })]
+            }));
+          });
+        }
+
+        // AI 深度解析
+        if (r.analysis){
+          children.push(new Paragraph({
+            spacing: { before: 100, after: 40 },
+            children: [new TextRun({ text: '【AI 深度解析】', bold: true, size: 22, color: '1d39c4', font: FONT })]
+          }));
+          r.analysis.split(/\r?\n/).forEach(line=>{
+            children.push(new Paragraph({
+              indent: { firstLine: 440 },
+              spacing: { after: 40 },
+              children: [new TextRun({ text: line || '　', size: 22, font: FONT })]
+            }));
+          });
+        }
+
+        // 空行分隔
+        children.push(new Paragraph({ spacing: { after: 200 }, children: [] }));
+      });
+
+      // ---- 组装 A4 文档 ----
+      const doc = new Document({
+        styles: {
+          default: { document: { run: { font: FONT, size: 22 } } }
+        },
+        sections: [{
+          properties: {
+            page: {
+              size: { width: PageSize.A4.width, height: PageSize.A4.height },
+              margin: {
+                top: convertMillimetersToTwip(25.4),
+                right: convertMillimetersToTwip(25.4),
+                bottom: convertMillimetersToTwip(25.4),
+                left: convertMillimetersToTwip(25.4)
+              }
+            }
+          },
+          children
+        }]
+      });
+
+      Packer.toBlob(doc).then(blob=>{
+        saveAs(blob, `行测错题本_${new Date().toISOString().slice(0,10)}.docx`);
+        UI.toast('✅ Word 导出成功，开始下载','success',2600);
+      }).catch(e=>{ UI.toast('导出失败：'+(e.message||e),'warn'); console.error(e); });
+    } catch(e){
+      UI.toast('导出异常：'+(e.message||e),'warn'); console.error(e);
+    } finally {
+      if (btn){ btn.disabled = false; btn.textContent = btnText; }
+    }
   }
 
   function saveRecord(){
@@ -456,7 +516,7 @@ ${txt}
     Store.add({ text, module, subtype: ($("#m-subtype")?.value||"").trim(), myAnswer:my, correctAnswer:ok, note, analysis, image:addState.image });
     UI.toast("已保存到错题本 ✅","success",1800);
     addState = { text:"", image:null, module:null, subtype:null };
-    navigate("#/list");
+    setTimeout(()=>{ location.hash = "#/list"; }, 600);
   }
 
   function renderList(){
