@@ -709,7 +709,7 @@ const App = (() => {
   const $$ = (s, r=document) => [...r.querySelectorAll(s)];
 
   let addState = resetAddState();
-  function resetAddState(){ return { text:"", image:null, applied:false, module:null, subtype:null }; }
+  function resetAddState(){ return { text:"", image:null, applied:false, module:null, subtype:null, manualAnalysis:"" }; }
 
   const routes = { "#/add":renderAdd, "#/list":renderList, "#/stats":renderStats };
   function currentRoute(){ const h = location.hash || "#/add"; return routes[h] ? h : "#/add"; }
@@ -824,6 +824,7 @@ const App = (() => {
       }
       if (e.target.closest('[data-act="ai-save-cancel"]')){ document.querySelector(".modal-overlay")?.remove(); }
       if (e.target.closest('[data-act="ocr-extract"]')) runOCR();
+      if (e.target.closest('[data-act="crop-img"]')) openCropModal();
     });
     if (addState.text.trim()) runAnalysis();
   }
@@ -836,7 +837,92 @@ const App = (() => {
   function renderImgPreview(){
     const box = $("#img-preview"); if (!box) return;
     if (!addState.image){ box.innerHTML=""; $("#ocr-btn-wrap").style.display="none"; return; }
-    box.innerHTML = `<div class="img-wrap"><img class="preview-img" src="${addState.image}" alt="错题截图" /><button class="rm" data-act="remove-img" title="移除">✕</button></div>`;
+    box.innerHTML = `<div class="img-wrap"><img class="preview-img" src="${addState.image}" alt="错题截图" /><button class="rm" data-act="remove-img" title="移除">✕</button></div>
+      <div style="margin-top:8px;display:flex;gap:8px;">
+        <button class="btn btn-sm" data-act="crop-img" style="background:var(--primary);color:#fff;">✂️ 裁剪图片</button>
+      </div>`;
+  }
+
+  // === 图片裁剪 ===
+  let cropState = { active:false, img:null, startX:0, startY:0, curX:0, curY:0 };
+  function openCropModal(){
+    if (!addState.image) return;
+    const body = `
+      <div style="text-align:center;color:var(--text-dim);font-size:12px;margin-bottom:10px;">拖动图片上的选框来裁剪（只保留有题目的部分）</div>
+      <div style="position:relative;display:inline-block;max-width:100%;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#000;">
+        <img id="crop-img" src="${addState.image}" style="max-width:100%;display:block;user-select:none;" />
+        <div id="crop-box" style="position:absolute;border:2px solid var(--primary);background:rgba(79,156,249,0.15);cursor:move;min-width:20px;min-height:20px;">
+          <div style="position:absolute;right:-6px;bottom:-6px;width:12px;height:12px;background:var(--primary);border-radius:50%;cursor:nwse-resize;" id="crop-handle"></div>
+        </div>
+      </div>`;
+    UI.modal({ title:"✂️ 裁剪错题图片", bodyHTML: body, footerHTML: `<button class="btn" data-act="crop-cancel">取消</button><button class="btn btn-primary" data-act="crop-confirm">确认裁剪</button>`,
+      onMount(root, close){
+        const img = $("#crop-img", root); const box = $("#crop-box", root); const handle = $("#crop-handle", root);
+        img.onload = ()=>{
+          // 默认选框：中心区域 80%
+          const w = img.offsetWidth, h = img.offsetHeight;
+          const bw = w * 0.8, bh = h * 0.8;
+          box.style.left = ((w-bw)/2)+"px"; box.style.top = ((h-bh)/2)+"px";
+          box.style.width = bw+"px"; box.style.height = bh+"px";
+        };
+        box.addEventListener("mousedown", e=>{ e.stopPropagation(); startDrag(e, "move"); });
+        box.addEventListener("touchstart", e=>{ e.stopPropagation(); startDrag(e.touches[0], "move"); }, {passive:true});
+        handle.addEventListener("mousedown", e=>{ e.stopPropagation(); startDrag(e, "resize"); });
+        handle.addEventListener("touchstart", e=>{ e.stopPropagation(); startDrag(e.touches[0], "resize"); }, {passive:true});
+
+        function startDrag(e, mode){
+          cropState.active = true; cropState.mode = mode;
+          cropState.startX = (e.clientX||e.touches?.[0]?.clientX) - box.offsetLeft;
+          cropState.startY = (e.clientY||e.touches?.[0]?.clientY) - box.offsetTop;
+          cropState.startW = box.offsetWidth; cropState.startH = box.offsetHeight;
+        }
+        function onMove(e){
+          if (!cropState.active) return;
+          const cx = e.clientX || e.touches?.[0]?.clientX;
+          const cy = e.clientY || e.touches?.[0]?.clientY;
+          const imgRect = img.getBoundingClientRect();
+          if (cropState.mode === "move"){
+            let nx = cx - cropState.startX, ny = cy - cropState.startY;
+            nx = Math.max(0, Math.min(nx, imgRect.width - box.offsetWidth));
+            ny = Math.max(0, Math.min(ny, imgRect.height - box.offsetHeight));
+            box.style.left = nx + "px"; box.style.top = ny + "px";
+          } else {
+            let nw = cropState.startW + (cx - (box.offsetLeft + cropState.startW)), nh = cropState.startH + (cy - (box.offsetTop + cropState.startH));
+            nw = Math.max(20, Math.min(nw, imgRect.width - box.offsetLeft));
+            nh = Math.max(20, Math.min(nh, imgRect.height - box.offsetTop));
+            box.style.width = nw + "px"; box.style.height = nh + "px";
+          }
+        }
+        function onUp(){ cropState.active = false; }
+        root.addEventListener("mousemove", onMove); root.addEventListener("mouseup", onUp);
+        root.addEventListener("touchmove", onMove, {passive:true}); root.addEventListener("touchend", onUp);
+
+        root.addEventListener("click", async e=>{
+          if (e.target.closest('[data-act="crop-cancel"]')){ close(); }
+          if (e.target.closest('[data-act="crop-confirm"]')){
+            // 实际裁剪 canvas
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+            const imgEl = new Image(); imgEl.crossOrigin = "anonymous";
+            imgEl.onload = ()=>{
+              const scaleX = imgEl.naturalWidth / img.offsetWidth;
+              const scaleY = imgEl.naturalHeight / img.offsetHeight;
+              const sx = Math.round(box.offsetLeft * scaleX);
+              const sy = Math.round(box.offsetTop * scaleY);
+              const sw = Math.round(box.offsetWidth * scaleX);
+              const sh = Math.round(box.offsetHeight * scaleY);
+              canvas.width = sw; canvas.height = sh;
+              ctx.drawImage(imgEl, sx, sy, sw, sh, 0, 0, sw, sh);
+              addState.image = canvas.toDataURL("image/jpeg", 0.85);
+              renderImgPreview();
+              close(); UI.toast("裁剪完成 ✂️","success");
+            };
+            imgEl.onerror = ()=>{ close(); UI.toast("裁剪失败","error"); };
+            imgEl.src = addState.image;
+          }
+        });
+      }
+    });
   }
 
   // === OCR 图片文字识别 ===
@@ -948,21 +1034,22 @@ const App = (() => {
   /* AI 拆解预览渲染 */
   function renderAIPreview(exp) {
     if (!exp) return `<div class="analysis-box" style="border-color:var(--warn);"><div class="ab-label" style="color:var(--warn);">⚠️ 无法自动拆解，请先确认题型模块</div></div>`;
-    const mod = MODULES[exp.module];
-    const sub = exp.subtype ? SUBTYPE_MAP[exp.subtype] : null;
-    const fmt = (s) => UI.escapeHtml(s).replace(/\n/g, "<br>").replace(/\*\*/g, "");
     const hasApiKey = !!localStorage.getItem("xc_api_key");
+    const manualAnalysis = addState.manualAnalysis || "";
     return `
-      <div class="analysis-box" style="border-color:var(--success);">
-        <div class="ab-row"><span class="ab-label" style="color:var(--success);">🤖 AI 自动拆解（本地规则引擎）</span>${UI.moduleTag(exp.module)}${sub?`<span class="tag tag-muted">${UI.escapeHtml(sub.name)}</span>`:""}</div>
-        <div class="mt-12"><b style="color:var(--success);">${fmt(exp.correctReason)}</b></div>
-        <div class="mt-12"><b style="color:var(--danger);">${fmt(exp.wrongReason)}</b></div>
-        <div class="mt-12"><b style="color:var(--primary);">${fmt(exp.skillReason)}</b></div>
-        <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-sm" data-act="call-ai" style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;">🔗 ${hasApiKey?'调用联网 AI 深度解析':'设置 API Key + 联网解析'}</button>
-          <button class="btn btn-sm" data-act="copy-for-ai" style="background:var(--bg-soft);color:var(--text);">📋 复制题目给 AI 助手</button>
+      <div class="analysis-box" style="border-color:var(--primary);">
+        <div class="ab-row"><span class="ab-label" style="color:var(--primary);">🤖 AI 深度拆解</span><span class="tag tag-muted">选择一种方式</span></div>
+        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" data-act="call-ai" style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;padding:10px 16px;font-size:14px;">🔗 ${hasApiKey?'调用联网 AI 解析':'设置 API Key + 联网解析'}</button>
+          <button class="btn btn-sm" data-act="copy-for-ai" style="background:var(--bg-soft);color:var(--text);padding:10px 16px;font-size:14px;">📋 复制题目给 AI 助手（粘贴给我）</button>
         </div>
-        <div id="ai-online-result" style="display:none;margin-top:12px;"></div>
+        <div id="ai-online-result" style="display:none;margin-top:14px;"></div>
+
+        <div style="margin-top:16px;padding-top:14px;border-top:1px dashed var(--border);">
+          <div class="section-label" style="margin:0 0 8px;">✏️ 手动粘贴 AI 解析（自己粘贴后保存）</div>
+          <textarea id="manual-ai-analysis" placeholder="把 AI 助手给你的完整解析粘贴到这里，保存后永久留存…&#10;&#10;✅ 正确选项 A 的核心逻辑：&#10;❌ 错误选项陷阱拆解：&#10;💡 解题技巧：&#10;📝 我的错因针对性分析：" style="width:100%;min-height:140px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;line-height:1.7;resize:vertical;">${UI.escapeHtml(manualAnalysis)}</textarea>
+          <div style="margin-top:6px;font-size:11px;color:var(--text-mute);">💡 用了这个功能，保存后错题本和详情页都会显示你的 AI 解析</div>
+        </div>
       </div>`;
   }
 
@@ -1068,8 +1155,8 @@ ${txt}
     if (!text && !addState.image){ UI.toast("请至少输入题目文字或上传截图","warn"); return; }
     if (!addState.module){ UI.toast("请选择所属模块（或先粘贴题目让系统识别）","warn"); return; }
     const pits = $$(".pit-cb:checked").map(cb=>cb.dataset.pit);
-    const record = { text, image:addState.image, module:addState.module, subtype:addState.subtype, analysis:addState.lastAnalysis||null, pits, myAnswer:($("#my-ans")?.value||"").trim(), correctAnswer:($("#ok-ans")?.value||"").trim(), note:($("#note")?.value||"").trim(), tags:[] };
-    record.aiAnalysis = Analyzer.generateExplanation(text, record.myAnswer, record.correctAnswer);
+    const manualAi = ($("#manual-ai-analysis")?.value||"").trim();
+    const record = { text, image:addState.image, module:addState.module, subtype:addState.subtype, analysis:addState.lastAnalysis||null, pits, myAnswer:($("#my-ans")?.value||"").trim(), correctAnswer:($("#ok-ans")?.value||"").trim(), note:($("#note")?.value||"").trim(), manualAiAnalysis: manualAi, tags:[] };
     try { Store.add(record); UI.toast("已保存到错题本","success"); addState = resetAddState(); navigate("#/list"); }
     catch(e){ UI.toast(e.message||"保存失败","error",4000); }
   }
@@ -1123,8 +1210,13 @@ ${txt}
       <div class="section-label">答案与错误原因</div>
       <div class="grid grid-2" style="margin-bottom:10px;"><input id="d-my" type="text" placeholder="我的错误答案" value="${UI.escapeHtml(r.myAnswer||"")}" /><input id="d-ok" type="text" placeholder="正确答案" value="${UI.escapeHtml(r.correctAnswer||"")}" /></div>
       <textarea id="d-note" placeholder="我的错误原因（自己写）">${UI.escapeHtml(r.note||"")}</textarea>
-      <div class="section-label">🤖 AI 自动拆解（保存时自动更新）</div>
-      <div id="d-ai-box"></div>`;
+      <div class="section-label">🤖 AI 深度拆解（手动粘贴后保存）</div>
+      <textarea id="d-ai-manual" placeholder="把 AI 助手给你的完整解析粘贴到这里…&#10;✅ 正确选项的核心逻辑：&#10;❌ 错误选项陷阱拆解：&#10;💡 解题技巧：&#10;📝 我的错因针对性分析：" style="width:100%;min-height:180px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;line-height:1.7;resize:vertical;">${UI.escapeHtml(r.manualAiAnalysis||r.aiOnlineAnalysis||"")}</textarea>
+      <div style="margin-top:6px;display:flex;gap:6px;">
+        <button class="btn btn-sm" data-act="detail-call-ai" style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;">🔗 联网 AI 解析</button>
+        <button class="btn btn-sm" data-act="detail-copy-ai" style="background:var(--bg-soft);color:var(--text);">📋 复制题目给 AI 助手</button>
+      </div>
+      <div id="d-ai-online" style="display:none;margin-top:12px;"></div>`;
     const footerHTML = `<button class="btn btn-danger" data-act="del-detail">删除</button><span style="flex:1"></span><button class="btn" data-act="close">取消</button><button class="btn btn-primary" data-act="save-detail">保存修改</button>`;
     let cur = { module:r.module, subtype:r.subtype, pits:[...(r.pits||[])] };
     UI.modal({ title:"错题详情 / 编辑", bodyHTML, footerHTML,
@@ -1138,25 +1230,54 @@ ${txt}
           pitsBox.innerHTML = union.map(p=>{ const checked = cur.pits.includes(p)?"checked":""; return `<label style="display:flex;gap:8px;align-items:flex-start;padding:8px 10px;background:var(--bg-soft);border-radius:6px;margin-bottom:6px;cursor:pointer;font-size:13px;color:var(--text-dim);"><input type="checkbox" class="d-pit-cb" data-pit="${UI.escapeHtml(p)}" ${checked} style="margin-top:2px;width:auto;" /><span>${UI.escapeHtml(p)}</span></label>`; }).join("");
         };
         renderDpits();
-        // AI 拆解渲染
-        const aiBox = $("#d-ai-box", root);
-        const renderDAI = ()=>{
-          const my = $("#d-my", root).value.trim();
-          const ok = $("#d-ok", root).value.trim();
-          const exp = Analyzer.generateExplanation(r.text||"", my, ok);
-          aiBox.innerHTML = renderAIPreview(exp) + `<button class="btn btn-sm" data-act="regen" style="margin-top:8px;">🔄 重新生成 AI 拆解</button>`;
-        };
-        renderDAI();
-        $("#d-my", root).addEventListener("input", ()=>{ clearTimeout(window._det); window._det=setTimeout(renderDAI,400); });
-        $("#d-ok", root).addEventListener("input", ()=>{ clearTimeout(window._det); window._det=setTimeout(renderDAI,400); });
-        $("#d-module", root).addEventListener("change", e=>{ cur.module=e.target.value||null; cur.subtype=null; $("#d-subtype", root).innerHTML = UI.subtypeOptions(cur.module, null); cur.pits=[]; renderDpits(); });
-        $("#d-subtype", root).addEventListener("change", e=>{ cur.subtype=e.target.value||null; cur.pits=[]; renderDpits(); });
-        root.addEventListener("click", e=>{
-          if (e.target.closest('[data-act="regen"]')){ renderDAI(); UI.toast("AI 拆解已更新","success",1200); }
+        // 联网 AI 在详情页的调用
+        root.addEventListener("click", async e=>{
+          if (e.target.closest('[data-act="detail-call-ai"]')){
+            const txt = r.text || ""; const my = $("#d-my", root).value.trim(); const ok = $("#d-ok", root).value.trim();
+            const resultBox = $("#d-ai-online", root); resultBox.style.display = "";
+            resultBox.innerHTML = `<div style="text-align:center;padding:16px;color:var(--text-dim);">⏳ 联网 AI 解析中…</div>`;
+            const key = localStorage.getItem("xc_api_key");
+            if (!key){ resultBox.innerHTML = `<div style="color:var(--warn);font-size:13px;">请先在录入页设置 API Key，或用"复制题目给 AI 助手"按钮手动粘贴给 AI 助手。</div>`; return; }
+            const endpoint = localStorage.getItem("xc_api_endpoint") || "https://api.siliconflow.cn/v1/chat/completions";
+            const model = localStorage.getItem("xc_api_model") || "Qwen/Qwen2.5-7B-Instruct";
+            const prompt = `你是一名专业的公务员考试行测讲师。请对下面这道错题进行深度解析。
+
+【题目】${txt}
+【我的错误答案】${my||"未填"}
+【正确答案】${ok}
+
+请按以下格式输出（用中文）：
+✅ 正确选项${ok||"?"}的核心逻辑：
+❌ 错误选项陷阱拆解：
+💡 解题技巧：
+📝 我的错因针对性分析：`;
+            try {
+              const resp = await fetch(endpoint, { method:"POST", headers:{ "Content-Type":"application/json","Authorization":"Bearer "+key }, body: JSON.stringify({ model, messages:[{role:"system", content:"你是一名专业、严谨的行测讲师。"},{role:"user", content:prompt}], temperature:0.3, max_tokens:1200 }) });
+              if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+              const data = await resp.json(); const content = (data.choices?.[0]?.message?.content) || "";
+              resultBox.innerHTML = `<div style="background:linear-gradient(135deg,rgba(102,126,234,0.08),rgba(118,75,162,0.08));border:1px solid rgba(102,126,234,0.3);border-radius:8px;padding:14px;white-space:pre-wrap;font-size:13px;line-height:1.8;">${UI.escapeHtml(content)}</div>`;
+              if (content){ $("#d-ai-manual", root).value = content; }
+            } catch(err){ resultBox.innerHTML = `<div style="color:#cf1322;font-size:13px;">❌ ${UI.escapeHtml(err.message)}</div>`; }
+          }
+          if (e.target.closest('[data-act="detail-copy-ai"]')){
+            const txt = r.text || ""; const my = $("#d-my", root).value.trim(); const ok = $("#d-ok", root).value.trim();
+            const mod = MODULES[r.module]?.name || "行测"; const sub = r.subtype && SUBTYPE_MAP[r.subtype] ? SUBTYPE_MAP[r.subtype].name : "";
+            const prompt = `你是一名专业的公务员考试${mod}讲师${sub?`，擅长${sub}`:""}。请对下面这道错题进行深度解析。
+
+【题目】${txt}
+【我的错误答案】${my||"未填"}
+【正确答案】${ok||"未填"}
+
+请按以下格式输出（用中文）：
+✅ 正确选项${ok||"?"}的核心逻辑：
+❌ 错误选项陷阱拆解：
+💡 解题技巧：
+📝 我的错因针对性分析：`;
+            navigator.clipboard.writeText(prompt).then(()=>UI.toast("已复制！粘贴给 AI 助手吧 📋","success")).catch(()=>UI.toast("复制失败","error"));
+          }
           if (e.target.closest('[data-act="save-detail"]')){
             cur.pits = $$(".d-pit-cb:checked", root).map(cb=>cb.dataset.pit);
-            const upd = { module:cur.module, subtype:cur.subtype, pits:cur.pits, myAnswer:$("#d-my", root).value.trim(), correctAnswer:$("#d-ok", root).value.trim(), note:$("#d-note", root).value.trim() };
-            upd.aiAnalysis = Analyzer.generateExplanation(r.text||"", upd.myAnswer, upd.correctAnswer);
+            const upd = { module:cur.module, subtype:cur.subtype, pits:cur.pits, myAnswer:$("#d-my", root).value.trim(), correctAnswer:$("#d-ok", root).value.trim(), note:$("#d-note", root).value.trim(), manualAiAnalysis: $("#d-ai-manual", root).value.trim() };
             Store.update(r.id, upd);
             UI.toast("已保存修改","success"); close(); renderListBody();
           }
