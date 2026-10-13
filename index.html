@@ -160,6 +160,8 @@ textarea{resize:vertical;min-height:120px;line-height:1.6}
 
 <body>
   <div id="app"></div>
+<script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
+<script src="https://unpkg.com/file-saver@2.0.5/dist/FileSaver.min.js"></script>
 <script>
 
 (function(){
@@ -344,6 +346,104 @@ ${txt}
     });
   }
 
+
+  function exportWord(){
+    if (typeof docx === 'undefined'){ UI.toast('docx库未加载，请刷新页面','warn'); return; }
+    const recs = Store.getAll();
+    if (!recs.length){ UI.toast('错题本为空','warn'); return; }
+    const modF = document.getElementById('filter-module')?.value || '';
+    const schF = (document.getElementById('filter-search')?.value || '').trim().toLowerCase();
+    let list = recs;
+    if (modF) list = list.filter(r=>r.module===modF);
+    if (schF) list = list.filter(r=>(r.text||'').toLowerCase().includes(schF) || (r.note||'').toLowerCase().includes(schF) || (r.analysis||'').toLowerCase().includes(schF));
+    if (!list.length){ UI.toast('筛选后无错题','warn'); return; }
+
+    const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle, Table, TableRow, TableCell, WidthType } = docx;
+
+    const children = [];
+    // 标题
+    children.push(new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun({ text: '行测错题本', bold: true, size: 48 })]
+    }));
+    children.push(new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun({ text: `导出时间：${new Date().toLocaleString('zh-CN')} | 共 ${list.length} 题`, size: 20, color: '666666' })]
+    }));
+    children.push(new Paragraph({ children: [] }));
+
+    // 统计
+    const byModule = {};
+    list.forEach(r=>{ byModule[r.module] = (byModule[r.module]||0)+1; });
+    const statLines = Object.entries(byModule).map(([m,c])=>`${m}：${c}题`).join('  ');
+    children.push(new Paragraph({
+      children: [new TextRun({ text: '模块统计：', bold: true, size: 22 }), new TextRun({ text: statLines, size: 22 })]
+    }));
+    children.push(new Paragraph({ children: [] }));
+
+    // 每道题
+    list.forEach((r,i)=>{
+      children.push(new Paragraph({
+        heading: HeadingLevel.HEADING_2,
+        children: [new TextRun({ text: `${i+1}. [${r.module||'未分类'}] ${r.subtype||''}`, bold: true, size: 28 })]
+      }));
+      if (r.text){
+        children.push(new Paragraph({
+          children: [new TextRun({ text: '【题目】', bold: true, size: 22 })]
+        }));
+        r.text.split('
+').forEach(line=>{
+          children.push(new Paragraph({
+            indent: { left: 360 },
+            children: [new TextRun({ text: line, size: 22 })]
+          }));
+        });
+      }
+      const ansPara = [];
+      if (r.myAnswer) ansPara.push(new TextRun({ text: `❌ 我的答案：${r.myAnswer}  `, color: 'cf1322', size: 22 }));
+      if (r.correctAnswer) ansPara.push(new TextRun({ text: `✅ 正确答案：${r.correctAnswer}`, color: '389e0d', size: 22, bold: true }));
+      if (ansPara.length){
+        children.push(new Paragraph({ children: ansPara }));
+      }
+      if (r.note){
+        children.push(new Paragraph({
+          children: [new TextRun({ text: '【我的错误原因】', bold: true, size: 22, color: 'd48806' })]
+        }));
+        r.note.split('
+').forEach(line=>{
+          children.push(new Paragraph({
+            indent: { left: 360 },
+            children: [new TextRun({ text: line, size: 22, color: 'd48806' })]
+          }));
+        });
+      }
+      if (r.analysis){
+        children.push(new Paragraph({
+          children: [new TextRun({ text: '【AI 深度解析】', bold: true, size: 22, color: '2f54eb' })]
+        }));
+        r.analysis.split('
+').forEach(line=>{
+          children.push(new Paragraph({
+            indent: { left: 360 },
+            children: [new TextRun({ text: line, size: 22 })]
+          }));
+        });
+      }
+      children.push(new Paragraph({ children: [] }));
+    });
+
+    const doc = new Document({
+      styles: { default: { document: { run: { font: '宋体', size: 24 } } } },
+      sections: [{ children }]
+    });
+
+    Packer.toBlob(doc).then(blob=>{
+      saveAs(blob, `行测错题本_${new Date().toISOString().slice(0,10)}.docx`);
+      UI.toast('✅ 导出成功','success');
+    }).catch(e=>{ UI.toast('导出失败：'+e.message,'warn'); });
+  }
+
   function saveRecord(){
     const text = addState.text.trim();
     const module = ($("#m-module")?.value||"").trim();
@@ -369,6 +469,7 @@ ${txt}
             ${MODULES.map(m=>`<option value="${m.id}">${m.name}</option>`).join("")}
           </select>
           <input id="filter-search" placeholder="搜索题干/笔记关键词..." style="flex:1;min-width:180px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-soft);color:var(--text);" />
+          <button data-act="export-word" style="padding:6px 14px;border-radius:6px;background:var(--primary);color:#fff;border:none;cursor:pointer;font-size:13px;">📄 导出 Word</button>
         </div>
         <div id="list-body"></div>
       </div>`;
@@ -415,7 +516,7 @@ ${txt}
         ${r.myAnswer?`<div style="flex:1;padding:10px;background:#fff1f0;border:1px solid #ffa39e;border-radius:6px;color:#cf1322;">❌ 你选：<strong>${UI.escapeHtml(r.myAnswer)}</strong></div>`:""}
         ${r.correctAnswer?`<div style="flex:1;padding:10px;background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;color:#389e0d;">✅ 正解：<strong>${UI.escapeHtml(r.correctAnswer)}</strong></div>`:""}
       </div>
-      ${r.note?`<div style="margin-bottom:16px;"><div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">📝 我的错误原因</div><div style="padding:10px;background:var(--bg-soft);border-radius:6px;font-size:13px;white-space:pre-wrap;">${UI.escapeHtml(r.note)}</div></div>`:""}
+      ${r.note?`<div style="margin-bottom:12px;"><div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">📝 我的错误原因</div><div style="padding:10px;background:var(--bg-soft);border-radius:6px;font-size:13px;white-space:pre-wrap;">${UI.escapeHtml(r.note)}</div></div>`:""}
       ${r.analysis?`<div style="margin-bottom:16px;"><div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">🤖 AI 深度解析</div><div style="padding:12px;background:linear-gradient(135deg,rgba(102,126,234,0.08),rgba(118,75,162,0.08));border:1px solid rgba(102,126,234,0.3);border-radius:8px;font-size:13px;line-height:1.8;white-space:pre-wrap;">${UI.escapeHtml(r.analysis)}</div></div>`:"<div style='margin-bottom:16px;padding:10px;background:var(--bg-soft);border-radius:6px;color:var(--text-dim);font-size:12px;'>💡 还没有 AI 解析，去录入页点「📋 复制题目给 AI 助手」拿到解析后在下方粘贴</div>"}
       <div style="border-top:1px solid var(--border);padding-top:12px;">
         <div class="form-row"><label>我的错误答案</label><input id="d-my" type="text" value="${UI.escapeHtml(r.myAnswer||"")}" /></div>
@@ -483,6 +584,7 @@ ${txt}
     if (e.target.matches('[data-act="save"]')) saveRecord();
     if (e.target.matches('[data-act="copy-for-ai"]')) copyForAI();
     if (e.target.matches('[data-act="remove-img"]')){ addState.image=null; renderImgPreview(); }
+    if (e.target.matches('[data-act="export-word"]')){ exportWord(); }
   });
 
   window.addEventListener("hashchange", render);
