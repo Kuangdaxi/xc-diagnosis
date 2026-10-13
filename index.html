@@ -252,7 +252,7 @@ const App = (() => {
 
   const routes = { "#/add":renderAdd, "#/list":renderList, "#/stats":renderStats };
   function currentRoute(){ const h = location.hash || "#/add"; return routes[h] ? h : "#/add"; }
-  function render(){ const route = currentRoute(); $("#page").innerHTML = shell(route); routes[route](); }
+  function render(){ const route = currentRoute(); document.getElementById("app").innerHTML = shell(route); routes[route](); }
   function shell(route){
     const navItem = (h,label)=>`<a href="${h}" class="${route===h?"active":""}" data-link="${h}">${label}</a>`;
     const count = Store.getAll().length;
