@@ -340,7 +340,132 @@ const Analyzer = (() => {
     return { pits: [], logic: "" };
   }
 
-  return { analyze, getPreset };
+  /* ========== AI 自动拆解引擎 ========== */
+  function extractOptions(text) {
+    const opts = {};
+    const letters = ["A","B","C","D","E","F"];
+    for (const L of letters) {
+      const re = new RegExp(`(?:(?:^|[\\n\\s])${L}[.、)\\s]|${L}项[：:])([\\s\\S]*?)(?=(?:${letters.join("|")})[.、)\\s]|$)`, "i");
+      const m = text.match(re);
+      if (m) opts[L] = m[1].trim().slice(0, 80);
+    }
+    return opts;
+  }
+  function parseCorrectLetter(ans) {
+    if (!ans) return null;
+    const m = String(ans).toUpperCase().match(/[A-F]/);
+    return m ? m[0] : null;
+  }
+  const MODULE_TIPS = {
+    speech: { strategy:"先看题干问法，再抓关联词定位重点句，最后辨析选项差异。", shortcut:"转折词（但/然而/却）后面必是重点；递进词（更/甚至）后是程度更深的重点；因果词（因此/所以）后是结论。", traps:["把举例/数据当主旨","只看一个空就盲选","主观臆断选常识正确但原文没提的选项"] },
+    judge:  { strategy:"先明确题型，再套用对应方法，注意审题看清'属于/不属于'、'正确/错误'。", shortcut:"图形推理先看数量规律再看位置规律；定义判断逐要件比对；类比推理先看一级关系再看二级辨析；逻辑判断先找论点再看削弱/加强方向。", traps:["图形推理死盯一种规律","定义判断凭感觉整体匹配","类比推理关系方向反了","逻辑判断选了诉诸权威/无关项"] },
+    data:   { strategy:"先看问题锁定考点，再找材料对应数据，最后列式计算——别急着算，先看选项差距。", shortcut:"增长率=（现期-基期）/基期；比重变化看部分率vs整体率谁大；综合题先验易判选项。", traps:["把同比当环比","比重变化量vs比重变化率公式搞混","综合题把'正确的是'看成'错误的是'","单位换算错"] },
+    quant:  { strategy:"优先代入排除、特值法、比例法，实在不行才硬算。", shortcut:"工程问题设工作总量为最小公倍数；行程问题相遇路程=速度和×时间；排列组合A有序C无序；概率善用对立事件。", traps:["硬算不代入排除","行程追及忘算往返时间","排列组合重复/遗漏","概率漏乘条件"] },
+    common: { strategy:"绝对化表述优先排除，排除法是王道。", shortcut:"时政记关键词（根本/基本/核心）；法律看主体是否适格；经济记易混概念。", traps:["看到'所有/一定/唯一'还不怀疑","根本制度vs基本制度混淆","把朴素公平感当法律规定"] }
+  };
+  function detectLogicRelation(t) {
+    if (/但|然而|却|不过|可是/.test(t)) return "转折";
+    if (/不仅|而且|更|甚至|还/.test(t)) return "递进";
+    if (/因为|由于|所以|因此|导致/.test(t)) return "因果";
+    if (/不是.*而是|并非|相反/.test(t)) return "对比";
+    return "语境搭配";
+  }
+  function detectMainPoint(t) {
+    if (/但|然而|却|可见|因此|也就是说/.test(t)) return "重点在转折/总结词之后，主旨是对全文的全面概括";
+    return "对全文主旨的全面概括，不选片面选项";
+  }
+  function detectGraphic(t) { const p=/数[量]?|点|线|面|一笔画|对称|旋转|平移|翻转/.exec(t); return p?p[0]:"某种数量或位置"; }
+  function detectDataFormula(t) {
+    if (/增长率|增速|增幅/.test(t)) return "增长率=(现期-基期)/基期";
+    if (/比重|占比/.test(t)) return "比重=部分/整体";
+    if (/倍数|平均|人均/.test(t)) return "A是B几倍=A/B，平均数=总量/总份数";
+    return "根据问题对应公式";
+  }
+  function detectQuantModel(t) {
+    if (/行程|速度|出发|相遇|追及/.test(t)) return "行程：相遇=速度和×时间，追及=速度差×时间";
+    if (/工程|完成|几天|合作/.test(t)) return "工程：设总量为效率最小公倍数";
+    if (/利润|成本|售价|折扣/.test(t)) return "利润=售价-成本，利润率=利润/成本";
+    if (/概率|至少|恰好/.test(t)) return "概率善用对立事件简化";
+    return "优先尝试代入排除法";
+  }
+  function guessTrapKind(letter, content, text, analysis) {
+    if (!content) return "未提取到选项内容";
+    const c = content.toLowerCase();
+    if (analysis.module === "speech") {
+      if (/只|仅|唯一|绝对/.test(c)) return "表述绝对化，主旨选温和不选极端";
+      if (/部分|有些|片面/.test(c) || content.length < 15) return "表述片面，主旨要全面概括";
+      return "混淆概念/脱离原文";
+    }
+    if (analysis.module === "judge") {
+      return "干扰项，接近正确但细节不符或逻辑不成立";
+    }
+    if (analysis.module === "data") {
+      if (/同比|环比/.test(c)) return "同比环比混淆";
+      if (/万|亿|%|‰/.test(c)) return "单位换算错误";
+      return "计算误差或近似干扰";
+    }
+    if (analysis.module === "quant") return "模型套用错误/计算失误";
+    return "似是而非的干扰项";
+  }
+
+  function generateExplanation(rawText, myAnswer, correctAnswer) {
+    const text = (rawText||"").replace(/\s+/g," ").trim();
+    if (!text) return null;
+    const analysis = Analyzer.analyze(text);
+    if (analysis.unknown || !analysis.module) return null;
+    const mod = MODULES[analysis.module];
+    const sub = analysis.subtype ? SUBTYPE_MAP[analysis.subtype] : null;
+    const tips = MODULE_TIPS[analysis.module] || MODULE_TIPS.speech;
+    const options = extractOptions(text);
+    const correctLetter = parseCorrectLetter(correctAnswer);
+    const wrongLetter = parseCorrectLetter(myAnswer);
+
+    let correctReason = "";
+    if (correctLetter && options[correctLetter]) {
+      correctReason = `✅ **正确选项 ${correctLetter}** 的核心逻辑：\n`;
+      if (analysis.subtype === "logic_fill") {
+        correctReason += `题干中关联词暗示【${detectLogicRelation(text)}】关系，空格处需填入符合该关系逻辑的词，${correctLetter}项最契合。`;
+      } else if (analysis.subtype === "fragment_read") {
+        correctReason += detectMainPoint(text) + `，${correctLetter}项准确概括了这一点。`;
+      } else if (analysis.module === "judge" && analysis.subtype === "graphic") {
+        correctReason += `图形呈现【${detectGraphic(text)}】规律，${correctLetter}项符合该规律。`;
+      } else if (analysis.module === "data") {
+        correctReason += `根据材料数据，套用公式【${detectDataFormula(text)}】，计算结果与${correctLetter}项吻合。`;
+      } else if (analysis.module === "quant") {
+        correctReason += `${detectQuantModel(text)}，${correctLetter}项满足题意。`;
+      } else {
+        correctReason += `该选项最符合${sub?sub.name:mod.name}的解题逻辑与考点要求。`;
+      }
+    } else {
+      correctReason = "（📌 填写正确答案字母 A/B/C/D 后，AI 能给出更精准的正确原因）";
+    }
+
+    let wrongReason = "";
+    if (correctLetter && options[correctLetter]) {
+      const wrongLetters = Object.keys(options).filter(L => L !== correctLetter);
+      wrongReason = "❌ **错误选项陷阱拆解**：\n";
+      wrongLetters.forEach(L => {
+        wrongReason += `• **${L}项**：${options[L] || "内容未提取"} — ${guessTrapKind(L, options[L], text, analysis)}\n`;
+      });
+    } else {
+      wrongReason = "（📌 填写正确答案后，AI 自动拆解每个错误选项的陷阱类型）";
+    }
+
+    let skillReason = `💡 **这道题的解题技巧**：\n`;
+    if (sub) skillReason += `这是【${sub.name}】，核心方法：${sub.logic}\n`;
+    skillReason += `📋 通用策略：${tips.strategy}\n`;
+    skillReason += `⚡ 快速捷径：${tips.shortcut}\n`;
+    skillReason += `⚠️ 易踩坑：${tips.traps.slice(0,2).join("、")}`;
+
+    return {
+      module: analysis.module, subtype: analysis.subtype,
+      correctLetter, wrongLetter,
+      correctReason, wrongReason, skillReason,
+      generatedAt: Date.now(), version: "2.0"
+    };
+  }
+
+  return { analyze, getPreset, generateExplanation };
 })();
 window.XC.Analyzer = Analyzer;
 
@@ -357,7 +482,7 @@ const Store = (() => {
   function getById(id) { return load().find(r=>r.id===id) || null; }
   function add(record) {
     const arr = load();
-    const item = Object.assign({ id:uid(), createdAt:Date.now(), text:"", image:null, module:null, subtype:null, analysis:null, pits:[], myAnswer:"", correctAnswer:"", note:"", tags:[] }, record);
+    const item = Object.assign({ id:uid(), createdAt:Date.now(), text:"", image:null, module:null, subtype:null, analysis:null, pits:[], myAnswer:"", correctAnswer:"", aiAnalysis:null, note:"", tags:[] }, record);
     arr.push(item); save(arr); return item;
   }
   function update(id, patch) {
@@ -526,11 +651,12 @@ const App = (() => {
             </div>
           </div>
           <div class="card">
-            <div class="card-title"><span class="dot"></span>补充信息（可选）</div>
+            <div class="card-title"><span class="dot"></span>答题信息</div>
             <div class="form-row"><label>我的错误答案</label><input id="my-ans" type="text" placeholder="例如：B" /></div>
             <div class="form-row"><label>正确答案</label><input id="ok-ans" type="text" placeholder="例如：D" /></div>
-            <div class="form-row"><label>我的反思 / 易错点</label><textarea id="note" placeholder="为什么做错？下次注意什么…"></textarea></div>
-            <button class="btn btn-primary" data-act="save" style="width:100%;">保存到错题本</button>
+            <div class="form-row"><label>我的错误原因（自己写）</label><textarea id="note" placeholder="你为什么做错了？哪一步没考虑到？…"></textarea></div>
+            <div id="ai-preview" style="display:none;margin-top:10px;"></div>
+            <button class="btn btn-primary" data-act="save" style="width:100%;margin-top:10px;">保存到错题本</button>
           </div>
         </div>
       </div>`;
@@ -546,6 +672,24 @@ const App = (() => {
     dz.addEventListener("drop", e=>{ e.preventDefault(); dz.classList.remove("drag"); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
     $("#m-module").addEventListener("change", e=>{ addState.module = e.target.value || null; addState.subtype=null; addState.applied=true; $("#m-subtype").innerHTML = UI.subtypeOptions(addState.module, null); refreshPits(); });
     $("#m-subtype").addEventListener("change", e=>{ addState.subtype = e.target.value || null; addState.applied=true; refreshPits(); });
+    // 填完答案后实时预览 AI 拆解
+    const ansTimer = { t:null };
+    const triggerAI = () => {
+      const txt = addState.text.trim();
+      const my = ($("#my-ans")?.value||"").trim();
+      const ok = ($("#ok-ans")?.value||"").trim();
+      const box = $("#ai-preview");
+      if (!txt) { box.style.display="none"; return; }
+      if (!ok && !my) { box.style.display="none"; return; }
+      const exp = Analyzer.generateExplanation(txt, my, ok);
+      box.innerHTML = renderAIPreview(exp);
+      box.style.display = "";
+    };
+    const ansBoxes = ["my-ans","ok-ans"];
+    ansBoxes.forEach(id=>{
+      const el = $("#"+id);
+      if (el) el.addEventListener("input", ()=>{ clearTimeout(ansTimer.t); ansTimer.t = setTimeout(triggerAI, 400); });
+    });
     page.addEventListener("click", e=>{
       if (e.target.closest('[data-act="save"]')) saveRecord();
       if (e.target.closest('[data-act="remove-img"]')){ addState.image=null; renderImgPreview(); }
@@ -618,6 +762,21 @@ const App = (() => {
 
     return `<div class="analysis-box"><div class="ab-row"><span class="ab-label">模块</span>${UI.moduleTag(r.module)}${sub?`<span class="ab-label" style="margin-left:10px;">题型</span><span class="tag tag-muted">${UI.escapeHtml(sub.name)}</span>`:""}<span class="confidence" style="margin-left:auto;">置信度 ${r.confidence}%</span></div>${confBar}<div class="reasoning">${UI.escapeHtml(r.reasoning)}</div>${breakdown}</div>`;
   }
+  /* AI 拆解预览渲染 */
+  function renderAIPreview(exp) {
+    if (!exp) return `<div class="analysis-box" style="border-color:var(--warn);"><div class="ab-label" style="color:var(--warn);">⚠️ 无法自动拆解，请先确认题型模块</div></div>`;
+    const mod = MODULES[exp.module];
+    const sub = exp.subtype ? SUBTYPE_MAP[exp.subtype] : null;
+    const fmt = (s) => UI.escapeHtml(s).replace(/\n/g, "<br>").replace(/\*\*/g, "");
+    return `
+      <div class="analysis-box" style="border-color:var(--success);">
+        <div class="ab-row"><span class="ab-label" style="color:var(--success);">🤖 AI 自动拆解</span>${UI.moduleTag(exp.module)}${sub?`<span class="tag tag-muted">${UI.escapeHtml(sub.name)}</span>`:""}</div>
+        <div class="mt-12"><b style="color:var(--success);">${fmt(exp.correctReason)}</b></div>
+        <div class="mt-12"><b style="color:var(--danger);">${fmt(exp.wrongReason)}</b></div>
+        <div class="mt-12"><b style="color:var(--primary);">${fmt(exp.skillReason)}</b></div>
+      </div>`;
+  }
+
   function refreshPits(forcePits){
     const box = $("#pits-box"); if (!box) return;
     const preset = Analyzer.getPreset(addState.module, addState.subtype);
@@ -631,6 +790,7 @@ const App = (() => {
     if (!addState.module){ UI.toast("请选择所属模块（或先粘贴题目让系统识别）","warn"); return; }
     const pits = $$(".pit-cb:checked").map(cb=>cb.dataset.pit);
     const record = { text, image:addState.image, module:addState.module, subtype:addState.subtype, analysis:addState.lastAnalysis||null, pits, myAnswer:($("#my-ans")?.value||"").trim(), correctAnswer:($("#ok-ans")?.value||"").trim(), note:($("#note")?.value||"").trim(), tags:[] };
+    record.aiAnalysis = Analyzer.generateExplanation(text, record.myAnswer, record.correctAnswer);
     try { Store.add(record); UI.toast("已保存到错题本","success"); addState = resetAddState(); navigate("#/list"); }
     catch(e){ UI.toast(e.message||"保存失败","error",4000); }
   }
@@ -681,9 +841,11 @@ const App = (() => {
       <div class="form-row" style="margin-bottom:10px;"><select id="d-subtype">${UI.subtypeOptions(r.module, r.subtype)}</select></div>
       <div class="section-label">常见踩坑（勾选符合本题的）</div>
       <div id="d-pits"></div>
-      <div class="section-label">答案与反思</div>
+      <div class="section-label">答案与错误原因</div>
       <div class="grid grid-2" style="margin-bottom:10px;"><input id="d-my" type="text" placeholder="我的错误答案" value="${UI.escapeHtml(r.myAnswer||"")}" /><input id="d-ok" type="text" placeholder="正确答案" value="${UI.escapeHtml(r.correctAnswer||"")}" /></div>
-      <textarea id="d-note" placeholder="反思 / 易错点">${UI.escapeHtml(r.note||"")}</textarea>`;
+      <textarea id="d-note" placeholder="我的错误原因（自己写）">${UI.escapeHtml(r.note||"")}</textarea>
+      <div class="section-label">🤖 AI 自动拆解（保存时自动更新）</div>
+      <div id="d-ai-box"></div>`;
     const footerHTML = `<button class="btn btn-danger" data-act="del-detail">删除</button><span style="flex:1"></span><button class="btn" data-act="close">取消</button><button class="btn btn-primary" data-act="save-detail">保存修改</button>`;
     let cur = { module:r.module, subtype:r.subtype, pits:[...(r.pits||[])] };
     UI.modal({ title:"错题详情 / 编辑", bodyHTML, footerHTML,
@@ -697,12 +859,26 @@ const App = (() => {
           pitsBox.innerHTML = union.map(p=>{ const checked = cur.pits.includes(p)?"checked":""; return `<label style="display:flex;gap:8px;align-items:flex-start;padding:8px 10px;background:var(--bg-soft);border-radius:6px;margin-bottom:6px;cursor:pointer;font-size:13px;color:var(--text-dim);"><input type="checkbox" class="d-pit-cb" data-pit="${UI.escapeHtml(p)}" ${checked} style="margin-top:2px;width:auto;" /><span>${UI.escapeHtml(p)}</span></label>`; }).join("");
         };
         renderDpits();
+        // AI 拆解渲染
+        const aiBox = $("#d-ai-box", root);
+        const renderDAI = ()=>{
+          const my = $("#d-my", root).value.trim();
+          const ok = $("#d-ok", root).value.trim();
+          const exp = Analyzer.generateExplanation(r.text||"", my, ok);
+          aiBox.innerHTML = renderAIPreview(exp) + `<button class="btn btn-sm" data-act="regen" style="margin-top:8px;">🔄 重新生成 AI 拆解</button>`;
+        };
+        renderDAI();
+        $("#d-my", root).addEventListener("input", ()=>{ clearTimeout(window._det); window._det=setTimeout(renderDAI,400); });
+        $("#d-ok", root).addEventListener("input", ()=>{ clearTimeout(window._det); window._det=setTimeout(renderDAI,400); });
         $("#d-module", root).addEventListener("change", e=>{ cur.module=e.target.value||null; cur.subtype=null; $("#d-subtype", root).innerHTML = UI.subtypeOptions(cur.module, null); cur.pits=[]; renderDpits(); });
         $("#d-subtype", root).addEventListener("change", e=>{ cur.subtype=e.target.value||null; cur.pits=[]; renderDpits(); });
         root.addEventListener("click", e=>{
+          if (e.target.closest('[data-act="regen"]')){ renderDAI(); UI.toast("AI 拆解已更新","success",1200); }
           if (e.target.closest('[data-act="save-detail"]')){
             cur.pits = $$(".d-pit-cb:checked", root).map(cb=>cb.dataset.pit);
-            Store.update(r.id, { module:cur.module, subtype:cur.subtype, pits:cur.pits, myAnswer:$("#d-my", root).value.trim(), correctAnswer:$("#d-ok", root).value.trim(), note:$("#d-note", root).value.trim() });
+            const upd = { module:cur.module, subtype:cur.subtype, pits:cur.pits, myAnswer:$("#d-my", root).value.trim(), correctAnswer:$("#d-ok", root).value.trim(), note:$("#d-note", root).value.trim() };
+            upd.aiAnalysis = Analyzer.generateExplanation(r.text||"", upd.myAnswer, upd.correctAnswer);
+            Store.update(r.id, upd);
             UI.toast("已保存修改","success"); close(); renderListBody();
           }
           if (e.target.closest('[data-act="del-detail"]')){
