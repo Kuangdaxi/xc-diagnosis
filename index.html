@@ -993,18 +993,18 @@ const App = (() => {
       status.innerText = `图片已压缩至 ${(imageData.length/1024).toFixed(0)}KB，发送给 ${model}…`;
     }
 
-    const prompt = `请识别这张图片中的公务员考试行测题目，然后进行深度解析。
+    const prompt = `你是一名专业的公务员考试行测讲师，擅长深度拆解题目逻辑和错因。请识别这张图片中的行测题目，然后进行深度解析。
 
-请严格按以下 JSON 格式返回（用中文，不要返回 JSON 以外的任何内容）：
+⚠️ 必须严格按以下 JSON 格式返回，不要返回 JSON 以外的任何内容！analysis 对象是必须的，不能为空！
 {
-  "text": "完整的题目文字，包含题干和所有选项",
-  "module": "以下之一：speech（言语理解）/judge（判断推理）/data（资料分析）/quant（数量关系）/common（常识判断）",
-  "myAnswer": "如果图片中标注了你选的错误答案，这里填字母；否则留空字符串",
-  "correctAnswer": "如果图片中标注了正确答案，这里填字母；否则根据题目内容推断正确答案字母",
+  "text": "完整的题目文字，包含题干和所有选项，不要遗漏",
+  "module": "只能是以下之一：speech/judge/data/quant/common",
+  "myAnswer": "图片中标注的你选的错误答案字母；如果没标注就留空字符串",
+  "correctAnswer": "正确答案字母，如果图片没标就根据题目推断",
   "analysis": {
-    "correctReason": "正确选项为什么对的详细分析，紧扣考点和逻辑",
-    "wrongReason": "逐个分析每个错误选项为什么错，指出陷阱类型",
-    "skillReason": "这类题的通用解题技巧和避坑要点"
+    "correctReason": "正确选项为什么对的详细分析，必须紧扣考点、逻辑关系、每个选项的对比，不能只说'最契合'",
+    "wrongReason": "逐个分析每个错误选项为什么错，必须指出每个选项的具体陷阱类型（如偷换概念/逻辑反转/无中生有/绝对化表述等），不能只说'不符合逻辑'",
+    "skillReason": "这类题的通用解题技巧和避坑要点，给出具体可操作的步骤"
   }
 }`;
 
@@ -1013,10 +1013,12 @@ const App = (() => {
       const resp = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type":"application/json", "Authorization":"Bearer "+key },
-        body: JSON.stringify({ model, messages:[{role:"user", content:[
-          {type:"image_url", image_url:{ url:imageData, detail:"high" }},
-          {type:"text", text:prompt }
-        ]}], temperature:0.3, max_tokens:2000 })
+        body: JSON.stringify({ model, messages:[
+          {role:"system", content:"你是一名专业的公务员考试行测讲师，擅长深度拆解题目逻辑和错因。必须严格按要求返回 JSON，analysis 对象是必须的，不能省略！"},
+          {role:"user", content:[
+            {type:"image_url", image_url:{ url:imageData, detail:"high" }},
+            {type:"text", text:prompt }
+          ]}], temperature:0.3, max_tokens:3500 })
       });
       const respText = await resp.text();
       if (!resp.ok){
@@ -1044,16 +1046,18 @@ const App = (() => {
         if (parsed.module){ addState.module = parsed.module; const sel = $("#m-module"); if(sel) sel.value = parsed.module; UI.subtypeOptions(parsed.module); renderAIPreview({module:parsed.module}); }
 
         // 把 AI 拆解粘到手动框
-        if (parsed.analysis){
-          const manualBox = $("#manual-ai-analysis");
-          if (manualBox){
-            let aiText = "";
-            if (parsed.analysis.correctReason) aiText += "✅ 正确选项的核心逻辑：\n" + parsed.analysis.correctReason + "\n\n";
-            if (parsed.analysis.wrongReason) aiText += "❌ 错误选项陷阱拆解：\n" + parsed.analysis.wrongReason + "\n\n";
-            if (parsed.analysis.skillReason) aiText += "💡 解题技巧：\n" + parsed.analysis.skillReason;
-            if (aiText) manualBox.value = aiText;
-          }
+        const manualBox = $("#manual-ai-analysis");
+        let aiText = "";
+        if (parsed.analysis && typeof parsed.analysis === "object"){
+          if (parsed.analysis.correctReason) aiText += "✅ 正确选项的核心逻辑：\n" + parsed.analysis.correctReason + "\n\n";
+          if (parsed.analysis.wrongReason) aiText += "❌ 错误选项陷阱拆解：\n" + parsed.analysis.wrongReason + "\n\n";
+          if (parsed.analysis.skillReason) aiText += "💡 解题技巧：\n" + parsed.analysis.skillReason;
         }
+        // 兜底：如果 analysis 缺失或为空，把 AI 原始返回粘过去
+        if (!aiText && raw){
+          aiText = "（AI 返回了内容但没按 JSON 格式，以下是原始返回）\n\n" + raw;
+        }
+        if (aiText && manualBox){ manualBox.value = aiText; }
 
         status.innerHTML = `<span style="color:var(--success);">✅ 全部填入完成！检查一下题目文字和答案是否正确，然后点保存。</span>`;
         UI.toast("AI 看图解析完成！","success",2500);
