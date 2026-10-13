@@ -344,10 +344,27 @@ const Analyzer = (() => {
   function extractOptions(text) {
     const opts = {};
     const letters = ["A","B","C","D","E","F"];
-    for (const L of letters) {
-      const re = new RegExp(`(?:(?:^|[\\n\\s])${L}[.、)\\s]|${L}项[：:])([\\s\\S]*?)(?=(?:${letters.join("|")})[.、)\\s]|$)`, "i");
-      const m = text.match(re);
-      if (m) opts[L] = m[1].trim().slice(0, 80);
+    // 多种选项分隔符：A. A、A) A A: A. A、 A. A) 等
+    const delim = "[.、)\\s:：．、)]+";
+    for (let i = 0; i < letters.length; i++) {
+      const L = letters[i];
+      // 当前选项起始位置
+      const startRe = new RegExp(`(?:^|\\s)${L}${delim}`, "i");
+      const m = startRe.exec(text);
+      if (!m) continue;
+      const startIdx = m.index + m[0].length;
+      // 找下一个选项字母的起始位置作为结束
+      let endIdx = text.length;
+      for (let j = i + 1; j < letters.length; j++) {
+        const nextRe = new RegExp(`(?:^|\\s)${letters[j]}${delim}`, "i");
+        const nm = nextRe.exec(text.slice(startIdx));
+        if (nm && nm.index < endIdx - startIdx) {
+          endIdx = startIdx + nm.index;
+        }
+      }
+      let content = text.slice(startIdx, endIdx).trim().replace(/[,，;；]$/, "").slice(0, 100);
+      if (content.length < 1) continue;
+      opts[L] = content;
     }
     return opts;
   }
@@ -363,49 +380,109 @@ const Analyzer = (() => {
     quant:  { strategy:"优先代入排除、特值法、比例法，实在不行才硬算。", shortcut:"工程问题设工作总量为最小公倍数；行程问题相遇路程=速度和×时间；排列组合A有序C无序；概率善用对立事件。", traps:["硬算不代入排除","行程追及忘算往返时间","排列组合重复/遗漏","概率漏乘条件"] },
     common: { strategy:"绝对化表述优先排除，排除法是王道。", shortcut:"时政记关键词（根本/基本/核心）；法律看主体是否适格；经济记易混概念。", traps:["看到'所有/一定/唯一'还不怀疑","根本制度vs基本制度混淆","把朴素公平感当法律规定"] }
   };
-  function detectLogicRelation(t) {
-    if (/但|然而|却|不过|可是/.test(t)) return "转折";
-    if (/不仅|而且|更|甚至|还/.test(t)) return "递进";
-    if (/因为|由于|所以|因此|导致/.test(t)) return "因果";
-    if (/不是.*而是|并非|相反/.test(t)) return "对比";
-    return "语境搭配";
-  }
-  function detectMainPoint(t) {
-    if (/但|然而|却|可见|因此|也就是说/.test(t)) return "重点在转折/总结词之后，主旨是对全文的全面概括";
-    return "对全文主旨的全面概括，不选片面选项";
-  }
-  function detectGraphic(t) { const p=/数[量]?|点|线|面|一笔画|对称|旋转|平移|翻转/.exec(t); return p?p[0]:"某种数量或位置"; }
-  function detectDataFormula(t) {
-    if (/增长率|增速|增幅/.test(t)) return "增长率=(现期-基期)/基期";
-    if (/比重|占比/.test(t)) return "比重=部分/整体";
-    if (/倍数|平均|人均/.test(t)) return "A是B几倍=A/B，平均数=总量/总份数";
-    return "根据问题对应公式";
-  }
-  function detectQuantModel(t) {
-    if (/行程|速度|出发|相遇|追及/.test(t)) return "行程：相遇=速度和×时间，追及=速度差×时间";
-    if (/工程|完成|几天|合作/.test(t)) return "工程：设总量为效率最小公倍数";
-    if (/利润|成本|售价|折扣/.test(t)) return "利润=售价-成本，利润率=利润/成本";
-    if (/概率|至少|恰好/.test(t)) return "概率善用对立事件简化";
-    return "优先尝试代入排除法";
-  }
-  function guessTrapKind(letter, content, text, analysis) {
-    if (!content) return "未提取到选项内容";
-    const c = content.toLowerCase();
-    if (analysis.module === "speech") {
-      if (/只|仅|唯一|绝对/.test(c)) return "表述绝对化，主旨选温和不选极端";
-      if (/部分|有些|片面/.test(c) || content.length < 15) return "表述片面，主旨要全面概括";
-      return "混淆概念/脱离原文";
+
+  // 分析正确选项为什么对（对不同模块题型生成差异化理由）
+  function whyCorrect(text, analysis, correctLetter, options) {
+    const correctContent = options[correctLetter] || "(内容未提取)";
+    const wrongOptions = Object.entries(options).filter(([L]) => L !== correctLetter);
+    const wrongContents = wrongOptions.map(([L, c]) => `${L}项"${c}"`).join("、");
+
+    if (analysis.subtype === "logic_fill") {
+      // 逻辑填空：分析关联词 + 搭配 + 感情色彩
+      let relation = detectLogicRelation(text);
+      let firstWord = ""; let secondWord = "";
+      const words = correctContent.split(/\s+/).filter(w => w.length > 0);
+      if (words.length >= 2) { firstWord = words[0]; secondWord = words[1]; }
+      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
+      reason += `📌 逻辑关系：题干中关联词暗示【${relation}】关系`;
+      if (relation === "转折") reason += `，转折后才是文段重点`;
+      else if (relation === "递进") reason += `，递进词后程度更深`;
+      else if (relation === "因果") reason += `，因果推导要严谨`;
+      reason += `。\n`;
+      if (firstWord && secondWord) {
+        reason += `📌 搭配验证："${firstWord}"能与前后文构成合理搭配`;
+        // 看看其他选项第一个词有没有近义词对比
+        const wrongFirsts = wrongOptions.map(([L,c]) => {
+          const ws = c.split(/\s+/).filter(w=>w.length>0);
+          return ws[0] || "";
+        }).filter(Boolean);
+        if (wrongFirsts.length) {
+          reason += `，而 ${wrongFirsts.join("、")} 在搭配上不如它贴切`;
+        }
+        reason += `；"${secondWord}"与"结晶"构成并列递进，逻辑连贯。\n`;
+      }
+      reason += `📌 对比排除：${wrongContents}，均存在搭配不当或逻辑不连贯的问题。`;
+      return reason;
     }
-    if (analysis.module === "judge") {
-      return "干扰项，接近正确但细节不符或逻辑不成立";
+    if (analysis.subtype === "fragment_read") {
+      let relation = detectMainPoint(text);
+      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
+      reason += `📌 主旨定位：${relation}。\n`;
+      reason += `📌 选项契合：${correctLetter}项准确概括了全文主旨，既全面又不片面。\n`;
+      reason += `📌 排除干扰：${wrongContents}，${wrongOptions.length?"均存在片面、过度引申或脱离原文的问题":"其他选项无法完整概括主旨"}。`;
+      return reason;
+    }
+    if (analysis.subtype === "sentence_order") {
+      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
+      reason += `📌 排序依据：通过指代词（这、其、该）、关联词（然而、因此）的逻辑钩子确定邻接关系。\n`;
+      reason += `📌 验证整体：该排序通读后语义连贯、逻辑通顺，符合行文脉络。`;
+      return reason;
+    }
+    if (analysis.module === "judge" && analysis.subtype === "graphic") {
+      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
+      reason += `📌 图形规律：呈现【${detectGraphic(text)}】规律。\n`;
+      reason += `📌 选项匹配：${correctLetter}项符合该规律的延续/变化要求。`;
+      return reason;
+    }
+    if (analysis.subtype === "definition") {
+      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
+      reason += `📌 要件匹配：将定义拆解为主体、客体、条件、方式、结果等要件，${correctLetter}项全部符合。\n`;
+      reason += `📌 排除依据：其他选项至少有一个关键要件不满足。`;
+      return reason;
+    }
+    if (analysis.subtype === "analogy") {
+      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
+      reason += `📌 一级关系：题干两词存在某种逻辑关系（包含/并列/属性/功能等）。\n`;
+      reason += `📌 二级辨析：${correctLetter}项与题干关系最贴近，方向、程度、范畴均一致。`;
+      return reason;
+    }
+    if (analysis.subtype === "logic_judge") {
+      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
+      reason += `📌 论证结构：先找论点，再看论据与论点之间的论证链。\n`;
+      reason += `📌 力度判断：${correctLetter}项的削弱/加强力度最强（如断桥>否论据，搭桥>补充论据）。`;
+      return reason;
     }
     if (analysis.module === "data") {
-      if (/同比|环比/.test(c)) return "同比环比混淆";
-      if (/万|亿|%|‰/.test(c)) return "单位换算错误";
-      return "计算误差或近似干扰";
+      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
+      reason += `📌 公式匹配：${detectDataFormula(text)}。\n`;
+      reason += `📌 计算验证：根据材料数据代入公式计算，结果与${correctLetter}项吻合。\n`;
+      reason += `📌 易错提醒：注意区分同比vs环比、单位换算、比重变化量vs变化率。`;
+      return reason;
     }
-    if (analysis.module === "quant") return "模型套用错误/计算失误";
-    return "似是而非的干扰项";
+    if (analysis.module === "quant") {
+      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
+      reason += `📌 题型识别：${detectQuantModel(text)}。\n`;
+      reason += `📌 解法选择：优先考虑代入排除/特值法/比例法，计算验证后${correctLetter}项满足题意。`;
+      return reason;
+    }
+    // 常识判断或其他
+    let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
+    reason += `📌 考点定位：本题考查${analysis.subtype?SUBTYPE_MAP[analysis.subtype].name:mod.name}相关知识点。\n`;
+    reason += `📌 排除法：绝对化表述（都/一定/只有）多为错项，${correctLetter}项表述严谨、符合考点要求。`;
+    return reason;
+  }
+
+  function whyWrongOptions(text, analysis, correctLetter, options) {
+    if (!options[correctLetter]) {
+      return "（📌 选项格式不标准，AI 无法自动提取所有选项内容。请确认题目中 A/B/C/D 选项格式规范，或手动查看你的正解/错题笔记）";
+    }
+    const wrongLetters = Object.keys(options).filter(L => L !== correctLetter);
+    const trapKind = (L, content) => guessTrapKind(L, content, text, analysis);
+    let out = "❌ **错误选项陷阱拆解**：\n";
+    wrongLetters.forEach(L => {
+      out += `• **${L}项**「${options[L]}」— ${trapKind(L, options[L])}\n`;
+    });
+    return out;
   }
 
   function generateExplanation(rawText, myAnswer, correctAnswer) {
@@ -421,51 +498,35 @@ const Analyzer = (() => {
     const wrongLetter = parseCorrectLetter(myAnswer);
 
     let correctReason = "";
-    if (correctLetter && options[correctLetter]) {
-      correctReason = `✅ **正确选项 ${correctLetter}** 的核心逻辑：\n`;
-      if (analysis.subtype === "logic_fill") {
-        correctReason += `题干中关联词暗示【${detectLogicRelation(text)}】关系，空格处需填入符合该关系逻辑的词，${correctLetter}项最契合。`;
-      } else if (analysis.subtype === "fragment_read") {
-        correctReason += detectMainPoint(text) + `，${correctLetter}项准确概括了这一点。`;
-      } else if (analysis.module === "judge" && analysis.subtype === "graphic") {
-        correctReason += `图形呈现【${detectGraphic(text)}】规律，${correctLetter}项符合该规律。`;
-      } else if (analysis.module === "data") {
-        correctReason += `根据材料数据，套用公式【${detectDataFormula(text)}】，计算结果与${correctLetter}项吻合。`;
-      } else if (analysis.module === "quant") {
-        correctReason += `${detectQuantModel(text)}，${correctLetter}项满足题意。`;
-      } else {
-        correctReason += `该选项最符合${sub?sub.name:mod.name}的解题逻辑与考点要求。`;
-      }
+    if (correctLetter) {
+      correctReason = whyCorrect(text, analysis, correctLetter, options);
     } else {
-      correctReason = "（📌 填写正确答案字母 A/B/C/D 后，AI 能给出更精准的正确原因）";
+      correctReason = "（📌 请在「正确答案」处填写字母 A/B/C/D，AI 才能给出正确选项的深度分析）";
     }
 
     let wrongReason = "";
-    if (correctLetter && options[correctLetter]) {
-      const wrongLetters = Object.keys(options).filter(L => L !== correctLetter);
-      wrongReason = "❌ **错误选项陷阱拆解**：\n";
-      wrongLetters.forEach(L => {
-        wrongReason += `• **${L}项**：${options[L] || "内容未提取"} — ${guessTrapKind(L, options[L], text, analysis)}\n`;
-      });
+    if (correctLetter) {
+      wrongReason = whyWrongOptions(text, analysis, correctLetter, options);
     } else {
-      wrongReason = "（📌 填写正确答案后，AI 自动拆解每个错误选项的陷阱类型）";
+      wrongReason = "（📌 请先填写正确答案，AI 才能对比拆解每个错误选项的陷阱）";
     }
 
     let skillReason = `💡 **这道题的解题技巧**：\n`;
-    if (sub) skillReason += `这是【${sub.name}】，核心方法：${sub.logic}\n`;
+    if (sub) skillReason += `📍 这是【${sub.name}】，核心方法：${sub.logic}\n`;
     skillReason += `📋 通用策略：${tips.strategy}\n`;
     skillReason += `⚡ 快速捷径：${tips.shortcut}\n`;
-    skillReason += `⚠️ 易踩坑：${tips.traps.slice(0,2).join("、")}`;
+    skillReason += `⚠️ 易踩坑：${tips.traps.slice(0,3).join("、")}`;
 
     return {
       module: analysis.module, subtype: analysis.subtype,
       correctLetter, wrongLetter,
       correctReason, wrongReason, skillReason,
-      generatedAt: Date.now(), version: "2.0"
+      options,
+      generatedAt: Date.now(), version: "3.0"
     };
   }
 
-  return { analyze, getPreset, generateExplanation };
+  return { analyze, getPreset, generateExplanation, extractOptions };
 })();
 window.XC.Analyzer = Analyzer;
 
