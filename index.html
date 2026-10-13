@@ -808,7 +808,7 @@ const App = (() => {
       const el = $("#"+id);
       if (el) el.addEventListener("input", ()=>{ clearTimeout(ansTimer.t); ansTimer.t = setTimeout(triggerAI, 400); });
     });
-    page.addEventListener("click", e=>{
+    document.addEventListener("click", e=>{
       if (e.target.closest('[data-act="save"]')) saveRecord();
       if (e.target.closest('[data-act="remove-img"]')){ addState.image=null; renderImgPreview(); }
       if (e.target.closest('[data-act="call-ai"]')) callOnlineAI();
