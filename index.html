@@ -748,8 +748,8 @@ const App = (() => {
             </label>
             <div id="img-preview"></div>
             <div id="ocr-btn-wrap" style="display:none;margin-top:10px;">
-              <button class="btn btn-primary" data-act="vision-ai" style="width:100%;background:linear-gradient(135deg,#667eea,#764ba2);border:none;padding:12px;font-size:15px;">🖼️ AI 看图一键解析（需要 API Key）</button>
-              <div style="margin-top:6px;text-align:center;font-size:11px;color:var(--text-mute);">把题目图片发给 AI，自动识别文字+拆解+填入所有字段</div>
+              <button class="btn btn-primary" data-act="vision-ai" style="width:100%;background:linear-gradient(135deg,#667eea,#764ba2);border:none;padding:12px;font-size:15px;">🖼️ AI 看图一键解析</button>
+              <div style="margin-top:6px;text-align:center;font-size:11px;color:var(--text-mute);">把题目图片发给 AI，自动识别文字+拆解+填入所有字段 <a href="#" data-act="vision-settings" style="color:var(--primary);margin-left:6px;">⚙️ 修改Key/模型</a></div>
               <button class="btn" data-act="ocr-extract" style="width:100%;margin-top:8px;background:var(--bg-soft);">📷 仅识别文字（OCR，不需要联网）</button>
               <div id="ocr-status" style="margin-top:8px;font-size:12px;color:var(--text-dim);"></div>
             </div>
@@ -829,6 +829,10 @@ const App = (() => {
       if (e.target.closest('[data-act="ocr-extract"]')) runOCR();
       if (e.target.closest('[data-act="crop-img"]')) openCropModal();
       if (e.target.closest('[data-act="vision-ai"]')) runVisionAI();
+      if (e.target.closest('[data-act="vision-settings"]')){
+        localStorage.removeItem("xc_api_key"); localStorage.removeItem("xc_api_vision_model");
+        UI.toast("已清除，下次点 AI 解析会重新弹设置框","success",2000);
+      }
       if (e.target.closest('[data-act="vision-detect"]')){
         const k = $("#vision-key")?.value?.trim();
         if (!k){ UI.toast("请先粘贴 API Key","warn"); return; }
@@ -1024,6 +1028,10 @@ const App = (() => {
       if (!resp.ok){
         let errMsg = respText.slice(0,300);
         try { const j = JSON.parse(respText); if(j.error) errMsg = j.error.message || j.error; } catch(e){}
+        // 友好错误提示
+        if (resp.status === 402) throw new Error(`HTTP 402：API 余额不足，请去 硅基流动控制台 充值。新用户送的 1400 万 tokens 可能用完了。`);
+        if (resp.status === 401) throw new Error(`HTTP 401：API Key 无效或过期，点 ⚙️ 修改Key/模型 重新设置。`);
+        if (resp.status === 403) throw new Error(`HTTP 403：该模型你的账号没权限，点 ⚙️ 修改Key/模型 重新检测可用模型。`);
         throw new Error(`HTTP ${resp.status}：${errMsg}`);
       }
       let data; try { data = JSON.parse(respText); } catch(e){ throw new Error("API 返回格式异常"); }
