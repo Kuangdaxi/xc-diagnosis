@@ -960,16 +960,17 @@ const App = (() => {
     if (btn) btn.disabled = true; btn.textContent = "⏳ AI 正在看图解析…";
     status.innerText = "发送图片给视觉模型…";
 
-    // 压缩图片到 base64
+    // 压缩图片到 base64（更狠的压缩，确保 < 1MB）
     let imageData = addState.image;
-    if (imageData.length > 2000000) {
-      const canvas = document.createElement("canvas"); const ctx = canvas.getContext("2d");
+    if (imageData) {
       const img = new Image(); img.crossOrigin = "anonymous";
       await new Promise((res,rej)=>{ img.onload = res; img.onerror = rej; img.src = imageData; });
-      const maxW = 1200, maxH = 1600; let w = img.naturalWidth, h = img.naturalHeight;
+      const maxW = 1024, maxH = 1024; let w = img.naturalWidth, h = img.naturalHeight;
       if (w > maxW || h > maxH){ const r = Math.min(maxW/w, maxH/h); w = Math.round(w*r); h = Math.round(h*r); }
-      canvas.width = w; canvas.height = h; ctx.drawImage(img, 0, 0, w, h);
-      imageData = canvas.toDataURL("image/jpeg", 0.8);
+      const canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d"); ctx.drawImage(img, 0, 0, w, h);
+      imageData = canvas.toDataURL("image/jpeg", 0.75);
+      status.innerText = `图片已压缩至 ${(imageData.length/1024).toFixed(0)}KB，发送给 ${model}…`;
     }
 
     const prompt = `请识别这张图片中的公务员考试行测题目，然后进行深度解析。
@@ -988,16 +989,22 @@ const App = (() => {
 }`;
 
     try {
+      status.innerText = `调用 API 中（图片 ${(imageData.length/1024).toFixed(0)}KB）…`;
       const resp = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type":"application/json", "Authorization":"Bearer "+key },
         body: JSON.stringify({ model, messages:[{role:"user", content:[
-          {type:"image_url", image_url:{ url:imageData }},
+          {type:"image_url", image_url:{ url:imageData, detail:"high" }},
           {type:"text", text:prompt }
         ]}], temperature:0.3, max_tokens:2000 })
       });
-      if (!resp.ok){ const err = await resp.text(); throw new Error(`HTTP ${resp.status}: ${err.slice(0,150)}`); }
-      const data = await resp.json();
+      const respText = await resp.text();
+      if (!resp.ok){
+        let errMsg = respText.slice(0,300);
+        try { const j = JSON.parse(respText); if(j.error) errMsg = j.error.message || j.error; } catch(e){}
+        throw new Error(`HTTP ${resp.status}：${errMsg}`);
+      }
+      let data; try { data = JSON.parse(respText); } catch(e){ throw new Error("API 返回格式异常"); }
       const raw = (data.choices?.[0]?.message?.content) || "";
       // 从返回里提取 JSON
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
@@ -1005,9 +1012,10 @@ const App = (() => {
       try { parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null; } catch(e){ parsed = null; }
 
       if (!parsed){
-        status.innerText = "⚠️ AI 返回了内容但格式不对，尝试手动粘贴";
+        // AI 返回了文字但不是 JSON，直接填入题目框 + 手动 AI 框
+        status.innerText = "⚠️ AI 返回了文字但格式不对，直接填入题目框";
         const ta = $("#q-text"); ta.value = raw; addState.text = raw; runAnalysis();
-        UI.toast("AI 返回了文字但没结构化，请手动核对","warn");
+        UI.toast("AI 返回了内容但没结构化，请手动核对","warn");
       } else {
         // 自动填入所有字段
         if (parsed.text){ const ta = $("#q-text"); ta.value = parsed.text; addState.text = parsed.text; runAnalysis(); }
@@ -1031,8 +1039,9 @@ const App = (() => {
         UI.toast("AI 看图解析完成！","success",2500);
       }
     } catch(e) {
-      status.innerText = "❌ 调用失败：" + (e.message||"") + "（可检查 API Key 或用下方 OCR + 手动输入替代）";
-      UI.toast("AI 看图解析失败","error");
+      console.error("Vision AI error:", e);
+      status.innerHTML = `<div style="color:#cf1322;font-size:13px;">❌ 调用失败：${UI.escapeHtml(e.message||"")}</div>`;
+      UI.toast("AI 看图解析失败："+(e.message||""),"error",4000);
     } finally {
       if (btn){ btn.disabled = false; btn.textContent = "🖼️ AI 看图一键解析（需要 API Key）"; }
     }
