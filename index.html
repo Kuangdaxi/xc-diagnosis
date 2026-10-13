@@ -381,6 +381,51 @@ const Analyzer = (() => {
     common: { strategy:"绝对化表述优先排除，排除法是王道。", shortcut:"时政记关键词（根本/基本/核心）；法律看主体是否适格；经济记易混概念。", traps:["看到'所有/一定/唯一'还不怀疑","根本制度vs基本制度混淆","把朴素公平感当法律规定"] }
   };
 
+  function detectLogicRelation(t) {
+    if (/但|然而|却|不过|可是/.test(t)) return "转折";
+    if (/不仅|而且|更|甚至|还/.test(t)) return "递进";
+    if (/因为|由于|所以|因此|导致/.test(t)) return "因果";
+    if (/不是.*而是|并非|相反/.test(t)) return "对比";
+    return "语境搭配";
+  }
+  function detectMainPoint(t) {
+    if (/但|然而|却|可见|因此|也就是说/.test(t)) return "重点在转折/总结词之后，主旨是对全文的全面概括";
+    return "对全文主旨的全面概括，不选片面选项";
+  }
+  function detectGraphic(t) { const p=/数[量]?|点|线|面|一笔画|对称|旋转|平移|翻转/.exec(t); return p?p[0]:"某种数量或位置"; }
+  function detectDataFormula(t) {
+    if (/增长率|增速|增幅/.test(t)) return "增长率=(现期-基期)/基期";
+    if (/比重|占比/.test(t)) return "比重=部分/整体";
+    if (/倍数|平均|人均/.test(t)) return "A是B几倍=A/B，平均数=总量/总份数";
+    return "根据问题对应公式";
+  }
+  function detectQuantModel(t) {
+    if (/行程|速度|出发|相遇|追及/.test(t)) return "行程：相遇=速度和×时间，追及=速度差×时间";
+    if (/工程|完成|几天|合作/.test(t)) return "工程：设总量为效率最小公倍数";
+    if (/利润|成本|售价|折扣/.test(t)) return "利润=售价-成本，利润率=利润/成本";
+    if (/概率|至少|恰好/.test(t)) return "概率善用对立事件简化";
+    return "优先尝试代入排除法";
+  }
+  function guessTrapKind(letter, content, text, analysis) {
+    if (!content) return "未提取到选项内容";
+    const c = content.toLowerCase();
+    if (analysis.module === "speech") {
+      if (/只|仅|唯一|绝对/.test(c)) return "表述绝对化，主旨选温和不选极端";
+      if (/部分|有些|片面/.test(c) || content.length < 15) return "表述片面，主旨要全面概括";
+      return "混淆概念/脱离原文";
+    }
+    if (analysis.module === "judge") {
+      return "干扰项，接近正确但细节不符或逻辑不成立";
+    }
+    if (analysis.module === "data") {
+      if (/同比|环比/.test(c)) return "同比环比混淆";
+      if (/万|亿|%|‰/.test(c)) return "单位换算错误";
+      return "计算误差或近似干扰";
+    }
+    if (analysis.module === "quant") return "模型套用错误/计算失误";
+    return "似是而非的干扰项";
+  }
+
   // 分析正确选项为什么对（对不同模块题型生成差异化理由）
   function whyCorrect(text, analysis, correctLetter, options) {
     const correctContent = options[correctLetter] || "(内容未提取)";
@@ -757,6 +802,20 @@ const App = (() => {
     page.addEventListener("click", e=>{
       if (e.target.closest('[data-act="save"]')) saveRecord();
       if (e.target.closest('[data-act="remove-img"]')){ addState.image=null; renderImgPreview(); }
+      if (e.target.closest('[data-act="call-ai"]')) callOnlineAI();
+      if (e.target.closest('[data-act="copy-for-ai"]')) copyForAI();
+      if (e.target.closest('[data-act="ai-save-ok"]')){
+        const k = $("#api-key-input")?.value?.trim();
+        const ep = $("#api-endpoint-input")?.value?.trim();
+        const m = $("#api-model-input")?.value?.trim();
+        if (!k){ UI.toast("请填写 API Key","warn"); return; }
+        localStorage.setItem("xc_api_key", k);
+        if (ep) localStorage.setItem("xc_api_endpoint", ep);
+        if (m) localStorage.setItem("xc_api_model", m);
+        document.querySelector(".modal-overlay")?.remove();
+        UI.toast("API Key 已保存，开始调用联网 AI…","success"); callOnlineAI();
+      }
+      if (e.target.closest('[data-act="ai-save-cancel"]')){ document.querySelector(".modal-overlay")?.remove(); }
     });
     if (addState.text.trim()) runAnalysis();
   }
@@ -832,13 +891,109 @@ const App = (() => {
     const mod = MODULES[exp.module];
     const sub = exp.subtype ? SUBTYPE_MAP[exp.subtype] : null;
     const fmt = (s) => UI.escapeHtml(s).replace(/\n/g, "<br>").replace(/\*\*/g, "");
+    const hasApiKey = !!localStorage.getItem("xc_api_key");
     return `
       <div class="analysis-box" style="border-color:var(--success);">
-        <div class="ab-row"><span class="ab-label" style="color:var(--success);">🤖 AI 自动拆解</span>${UI.moduleTag(exp.module)}${sub?`<span class="tag tag-muted">${UI.escapeHtml(sub.name)}</span>`:""}</div>
+        <div class="ab-row"><span class="ab-label" style="color:var(--success);">🤖 AI 自动拆解（本地规则引擎）</span>${UI.moduleTag(exp.module)}${sub?`<span class="tag tag-muted">${UI.escapeHtml(sub.name)}</span>`:""}</div>
         <div class="mt-12"><b style="color:var(--success);">${fmt(exp.correctReason)}</b></div>
         <div class="mt-12"><b style="color:var(--danger);">${fmt(exp.wrongReason)}</b></div>
         <div class="mt-12"><b style="color:var(--primary);">${fmt(exp.skillReason)}</b></div>
+        <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" data-act="call-ai" style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;">🔗 ${hasApiKey?'调用联网 AI 深度解析':'设置 API Key + 联网解析'}</button>
+          <button class="btn btn-sm" data-act="copy-for-ai" style="background:var(--bg-soft);color:var(--text);">📋 复制题目给 AI 助手</button>
+        </div>
+        <div id="ai-online-result" style="display:none;margin-top:12px;"></div>
       </div>`;
+  }
+
+  // === 联网 AI 调用 ===
+  async function callOnlineAI(){
+    const key = localStorage.getItem("xc_api_key");
+    const endpoint = localStorage.getItem("xc_api_endpoint") || "https://api.siliconflow.cn/v1/chat/completions";
+    const model = localStorage.getItem("xc_api_model") || "Qwen/Qwen2.5-7B-Instruct";
+    if (!key){
+      const apiBody = `
+        <div style="padding:8px 0;">
+          <p class="muted" style="margin:0 0 12px;font-size:13px;">支持任何兼容 OpenAI 的 API（硅基流动、阿里云百炼、智谱 AI 等）。<br>推荐用 <a href="https://cloud.siliconflow.cn/" target="_blank" style="color:var(--primary);">硅基流动</a>（免费额度充足）。</p>
+          <label style="font-size:13px;color:var(--text-dim);">API Key</label>
+          <input id="api-key-input" placeholder="sk-xxxxxx" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin:4px 0 10px;" />
+          <label style="font-size:13px;color:var(--text-dim);">API 地址（默认硅基流动）</label>
+          <input id="api-endpoint-input" value="${endpoint}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin:4px 0 10px;font-size:12px;" />
+          <label style="font-size:13px;color:var(--text-dim);">模型（默认 Qwen2.5-7B）</label>
+          <input id="api-model-input" value="${model}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin:4px 0 12px;font-size:12px;" />
+        </div>`;
+      const apiFoot = `<button class="btn" data-act="ai-save-cancel">取消</button><button class="btn btn-primary" data-act="ai-save-ok">保存并调用</button>`;
+      UI.modal({ title:"🔑 设置 AI API Key", bodyHTML: apiBody, footerHTML: apiFoot });
+      return;
+    }
+
+    const txt = addState.text.trim();
+    const my = ($("#my-ans")?.value||"").trim();
+    const ok = ($("#ok-ans")?.value||"").trim();
+    if (!ok){ UI.toast("请先填写正确答案","warn"); return; }
+
+    const resultBox = $("#ai-online-result");
+    resultBox.style.display = "";
+    resultBox.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text-dim);"><div style="display:inline-block;width:20px;height:20px;border:2px solid var(--primary);border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;"></div><div style="margin-top:8px;font-size:13px;">联网 AI 正在深度解析…</div></div>`;
+
+    const prompt = `你是一名专业的公务员考试行测讲师。请对下面这道错题进行深度解析。
+
+【题目】
+${txt}
+
+【我的错误答案】${my||"未填"}
+【正确答案】${ok}
+
+请按以下格式输出（用中文）：
+✅ 正确选项${ok}的核心逻辑：（为什么这个选项对？分析考点、逻辑关系、搭配、论证结构等）
+❌ 错误选项陷阱拆解：（逐个分析每个错误选项错在哪里、属于什么类型的干扰项）
+💡 解题技巧：（这类题的通用解法、快速识别捷径、避坑要点）
+📝 我的错因针对性分析：（结合"我的错误答案"分析我可能踩了什么思维误区）`;
+
+    try {
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "Authorization":"Bearer "+key },
+        body: JSON.stringify({ model, messages:[{role:"system", content:"你是一名专业、严谨的行测讲师，擅长拆解题目逻辑、分析错因。请用中文回答，条理清晰。"}, {role:"user", content:prompt}], temperature:0.3, max_tokens:1200 })
+      });
+      if (!resp.ok){ const err = await resp.text(); throw new Error(`HTTP ${resp.status}: ${err.slice(0,200)}`); }
+      const data = await resp.json();
+      const content = (data.choices?.[0]?.message?.content) || "（AI 未返回内容）";
+      resultBox.innerHTML = `<div style="background:linear-gradient(135deg,rgba(102,126,234,0.08),rgba(118,75,162,0.08));border:1px solid rgba(102,126,234,0.3);border-radius:8px;padding:14px;white-space:pre-wrap;font-size:13px;line-height:1.8;">${UI.escapeHtml(content)}</div>`;
+      // 自动保存到记录
+      if (Store.list && addState.text.trim()){
+        const records = Store.list();
+        const latest = records.sort((a,b)=>b.createdAt-a.createdAt)[0];
+        if (latest && latest.text === addState.text.trim()){
+          latest.aiOnlineAnalysis = content;
+          Store.update(latest.id, latest);
+        }
+      }
+    } catch(e) {
+      resultBox.innerHTML = `<div style="background:#fff1f0;border:1px solid #ffa39e;border-radius:8px;padding:12px;font-size:13px;color:#cf1322;">❌ 联网调用失败：${UI.escapeHtml(e.message)}<br><br><span style="color:var(--text-dim);">💡 检查 API Key 是否正确、余额是否充足、API 地址是否可达。或用下方"复制题目给 AI 助手"按钮手动粘贴到 AI 对话框。</span></div>`;
+    }
+  }
+
+  function copyForAI(){
+    const txt = addState.text.trim();
+    const my = ($("#my-ans")?.value||"").trim();
+    const ok = ($("#ok-ans")?.value||"").trim();
+    const mod = addState.module ? MODULES[addState.module].name : "行测";
+    const sub = addState.subtype && SUBTYPE_MAP[addState.subtype] ? SUBTYPE_MAP[addState.subtype].name : "";
+    const prompt = `你是一名专业的公务员考试${mod}讲师${sub?`，擅长${sub}`:""}。请对下面这道错题进行深度解析。
+
+【题目】
+${txt}
+
+【我的错误答案】${my||"未填"}
+【正确答案】${ok||"未填"}
+
+请按以下格式输出（用中文）：
+✅ 正确选项${ok||"?"}的核心逻辑：
+❌ 错误选项陷阱拆解：
+💡 解题技巧：
+📝 我的错因针对性分析：`;
+    navigator.clipboard.writeText(prompt).then(()=>{ UI.toast("已复制！去粘贴给 AI 助手吧 📋","success",2000); }).catch(()=>{ UI.toast("复制失败，请手动复制","error"); });
   }
 
   function refreshPits(forcePits){
