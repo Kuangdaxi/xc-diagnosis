@@ -199,7 +199,7 @@ const Store = (() => {
   function update(id, data){ const arr = getAll(); const i = arr.findIndex(r=>r.id===id); if(i>=0){ arr[i] = { ...arr[i], ...data }; save(arr); return arr[i]; } return null; }
   function remove(id){ save(getAll().filter(r=>r.id!==id)); }
   function clear(){ save([]); }
-  return { list, get, add, update, remove, clear };
+  return { getAll, list, get, add, update, remove, clear };
 })();
 
 const UI = (() => {
