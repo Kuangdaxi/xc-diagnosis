@@ -727,7 +727,7 @@ const App = (() => {
   function renderAdd(){
     const page = $("#page");
     page.innerHTML = `
-      <div class="page-head"><h1>录入错题</h1><p>粘贴题目文字或上传截图，系统会自动判断所属行测模块、题型并提示常见踩坑。</p></div>
+      <div class="page-head"><h1>录入错题</h1><p>粘贴题目文字或上传截图，选择所属模块与题型，填写答题信息。</p></div>
       <div class="grid grid-2">
         <div>
           <div class="card">
@@ -735,7 +735,6 @@ const App = (() => {
             <div class="form-row">
               <label>题目文字</label>
               <textarea id="q-text" placeholder="把题目（含题干和选项）粘贴到这里…&#10;例如：依次填入划横线部分最恰当的一组词是…">${UI.escapeHtml(addState.text)}</textarea>
-              <div class="hint">粘贴题目文字后，下方会自动分析模块与题型。</div>
             </div>
           </div>
           <div class="card">
@@ -747,19 +746,9 @@ const App = (() => {
               <input type="file" id="q-file" accept="image/*" />
             </label>
             <div id="img-preview"></div>
-            <div id="ocr-btn-wrap" style="display:none;margin-top:10px;">
-              <button class="btn btn-primary" data-act="vision-ai" style="width:100%;background:linear-gradient(135deg,#667eea,#764ba2);border:none;padding:12px;font-size:15px;">🖼️ AI 看图一键解析</button>
-              <div style="margin-top:6px;text-align:center;font-size:11px;color:var(--text-mute);">把题目图片发给 AI，自动识别文字+拆解+填入所有字段 <a href="#" data-act="vision-settings" style="color:var(--primary);margin-left:6px;">⚙️ 修改Key/模型</a></div>
-              <button class="btn" data-act="ocr-extract" style="width:100%;margin-top:8px;background:var(--bg-soft);">📷 仅识别文字（OCR，不需要联网）</button>
-              <div id="ocr-status" style="margin-top:8px;font-size:12px;color:var(--text-dim);"></div>
-            </div>
           </div>
         </div>
         <div>
-          <div class="card" id="analysis-card">
-            <div class="card-title"><span class="dot"></span>智能分析</div>
-            <div id="analysis-out"><p class="muted" style="font-size:13px;">输入或粘贴题目后，这里会出现自动判别结果。</p></div>
-          </div>
           <div class="card">
             <div class="card-title"><span class="dot" style="background:var(--primary);"></span>模块 & 题型（必选）</div>
             <div class="grid grid-2">
@@ -783,7 +772,7 @@ const App = (() => {
     if (addState.image) renderImgPreview();
 
     const ta = $("#q-text");
-    ta.addEventListener("input", ()=>{ addState.text = ta.value; clearTimeout(analyzeTimer); analyzeTimer = setTimeout(runAnalysis, 350); });
+    ta.addEventListener("input", ()=>{ addState.text = ta.value; });
     const fileInput = $("#q-file"); const dz = $("#dz");
     fileInput.addEventListener("change", ()=>handleFile(fileInput.files[0]));
     dz.addEventListener("dragover", e=>{ e.preventDefault(); dz.classList.add("drag"); });
@@ -860,17 +849,16 @@ const App = (() => {
       }
       if (e.target.closest('[data-act="vision-cancel"]')){ document.querySelector(".modal-overlay")?.remove(); }
     });
-    if (addState.text.trim()) runAnalysis();
   }
 
   function handleFile(file){
     if (!file) return;
     if (!file.type.startsWith("image/")){ UI.toast("请上传图片文件","error"); return; }
-    UI.fileToDataURL(file).then(dataURL=>{ addState.image=dataURL; renderImgPreview(); $("#ocr-btn-wrap").style.display=""; $("#ocr-status").innerText=""; UI.toast("截图已加载，可点下方按钮识别文字","success",1800); }).catch(err=>UI.toast(err.message||"上传失败","error"));
+    UI.fileToDataURL(file).then(dataURL=>{ addState.image=dataURL; renderImgPreview(); UI.toast("截图已加载","success",1800); }).catch(err=>UI.toast(err.message||"上传失败","error"));
   }
   function renderImgPreview(){
     const box = $("#img-preview"); if (!box) return;
-    if (!addState.image){ box.innerHTML=""; $("#ocr-btn-wrap").style.display="none"; return; }
+    if (!addState.image){ box.innerHTML=""; return; }
     box.innerHTML = `<div class="img-wrap"><img class="preview-img" src="${addState.image}" alt="错题截图" /><button class="rm" data-act="remove-img" title="移除">✕</button></div>
       <div style="margin-top:8px;display:flex;gap:8px;">
         <button class="btn btn-sm" data-act="crop-img" style="background:var(--primary);color:#fff;">✂️ 裁剪图片</button>
