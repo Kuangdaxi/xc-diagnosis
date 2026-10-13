@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="theme-color" content="#0f1420" />
+<title>行测错题诊断</title>
+<style>
+/* ============================================================
+   行测错题诊断 · 设计系统（内嵌）
+   ============================================================ */
+:root {
+  --bg: #0f1420; --bg-soft: #161d2e; --panel: #1c2538; --panel-2: #232e45;
+  --border: #2c3956; --text: #e8edf7; --text-dim: #9aa7c2; --text-mute: #6b7795;
+  --primary: #4f9cf9; --primary-soft: rgba(79,156,249,0.14); --accent: #ffb547;
+  --danger: #ff6b6b; --success: #4fd1a5; --warn: #f5a623;
+  --m-speech: #5b8def; --m-judge: #b06bff; --m-data: #2ec1a0; --m-quant: #ff8a5b; --m-common: #f6c347;
+  --radius: 14px; --radius-sm: 9px; --shadow: 0 10px 30px rgba(0,0,0,0.35); --maxw: 1080px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;font-size:15px;line-height:1.6}
+#app{min-height:100vh;display:flex;flex-direction:column}
+a{color:var(--primary);text-decoration:none}
+a:hover{text-decoration:underline}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,textarea,select{font-family:inherit;font-size:16px;color:var(--text);background:var(--bg-soft);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;width:100%;outline:none;transition:border-color .15s,box-shadow .15s}
+input:focus,textarea:focus,select:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-soft)}
+textarea{resize:vertical;min-height:120px;line-height:1.6}
+.topbar{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:16px;padding:14px 24px;background:rgba(22,29,46,.85);backdrop-filter:blur(10px);border-bottom:1px solid var(--border)}
+.topbar .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;letter-spacing:.5px}
+.brand .logo{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--primary),var(--accent));display:grid;place-items:center;font-size:16px;color:#0f1420;font-weight:800}
+.topbar .nav{display:flex;gap:4px;margin-left:8px}
+.topbar .nav a{padding:8px 14px;border-radius:8px;color:var(--text-dim);font-size:14px;font-weight:500}
+.topbar .nav a.active{background:var(--primary-soft);color:var(--primary)}
+.topbar .nav a:hover{text-decoration:none;color:var(--text)}
+.topbar .spacer{flex:1}
+.topbar .stat-mini{color:var(--text-dim);font-size:13px}
+.main{flex:1;padding:28px 24px 100px;max-width:var(--maxw);margin:0 auto;width:100%}
+.page-head{margin-bottom:22px}
+.page-head h1{font-size:24px;letter-spacing:.3px}
+.page-head p{color:var(--text-dim);margin-top:6px;font-size:14px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow)}
+.card+.card{margin-top:16px}
+.card-title{font-size:15px;font-weight:600;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.card-title .dot{width:8px;height:8px;border-radius:50%;background:var(--primary)}
+.grid{display:grid;gap:16px}
+.grid-2{grid-template-columns:1fr 1fr}
+.grid-3{grid-template-columns:repeat(3,1fr)}
+.grid-4{grid-template-columns:repeat(4,1fr)}
+@media (max-width:880px){.grid-2,.grid-3,.grid-4{grid-template-columns:1fr}}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 16px;border-radius:var(--radius-sm);font-size:14px;font-weight:600;background:var(--panel-2);color:var(--text);border:1px solid var(--border);transition:transform .08s,background .15s,border-color .15s}
+.btn:hover{background:var(--border)}
+.btn:active{transform:translateY(1px)}
+.btn-primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn-primary:hover{background:#3d8be0}
+.btn-danger{background:transparent;border-color:var(--danger);color:var(--danger)}
+.btn-danger:hover{background:rgba(255,107,107,.12)}
+.btn-ghost{background:transparent;border-color:transparent;color:var(--text-dim)}
+.btn-ghost:hover{background:var(--bg-soft);color:var(--text)}
+.btn-sm{padding:5px 10px;font-size:12px}
+.tag{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid transparent}
+.tag-speech{background:rgba(91,141,239,.14);color:var(--m-speech);border-color:rgba(91,141,239,.35)}
+.tag-judge{background:rgba(176,107,255,.14);color:var(--m-judge);border-color:rgba(176,107,255,.35)}
+.tag-data{background:rgba(46,193,160,.14);color:var(--m-data);border-color:rgba(46,193,160,.35)}
+.tag-quant{background:rgba(255,138,91,.14);color:var(--m-quant);border-color:rgba(255,138,91,.35)}
+.tag-common{background:rgba(246,195,71,.14);color:var(--m-common);border-color:rgba(246,195,71,.35)}
+.tag-muted{background:var(--bg-soft);color:var(--text-dim);border-color:var(--border)}
+.form-row{margin-bottom:16px}
+.form-row>label{display:block;font-size:13px;color:var(--text-dim);margin-bottom:6px;font-weight:500}
+.form-row .hint{font-size:12px;color:var(--text-mute);margin-top:5px}
+.dropzone{border:2px dashed var(--border);border-radius:var(--radius);padding:24px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s;color:var(--text-dim);display:block}
+.dropzone:hover,.dropzone.drag{border-color:var(--primary);background:var(--primary-soft);color:var(--text)}
+.dropzone .dz-icon{font-size:28px;margin-bottom:8px}
+.dropzone input{display:none}
+.preview-img{max-width:100%;max-height:320px;border-radius:var(--radius-sm);border:1px solid var(--border);margin-top:10px}
+.img-wrap{position:relative;display:inline-block;margin-top:10px}
+.img-wrap .rm{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.7);color:#fff;border-radius:50%;width:22px;height:22px;font-size:14px;display:grid;place-items:center}
+.analysis-box{background:var(--bg-soft);border:1px dashed var(--primary);border-radius:var(--radius);padding:16px 18px;margin-top:14px}
+.analysis-box .ab-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.analysis-box .ab-label{color:var(--text-dim);font-size:13px;min-width:64px}
+.analysis-box .confidence{font-size:12px;color:var(--text-mute)}
+.analysis-box .reasoning{color:var(--text-dim);font-size:13px;margin-top:6px}
+.pit-list{margin-top:10px;display:grid;gap:6px}
+.pit-item{display:flex;gap:8px;font-size:13px;color:var(--text-dim);background:rgba(255,181,71,.07);border-left:3px solid var(--accent);padding:8px 10px;border-radius:0 6px 6px 0}
+.pit-item b{color:var(--accent)}
+.q-list{display:grid;gap:12px}
+.q-item{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px;display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:start}
+@media (max-width:680px){.q-item{grid-template-columns:1fr}}
+.q-item .q-thumb{width:70px;height:70px;border-radius:8px;background:var(--bg-soft);border:1px solid var(--border);display:grid;place-items:center;color:var(--text-mute);font-size:11px;overflow:hidden}
+.q-item .q-thumb img{width:100%;height:100%;object-fit:cover}
+.q-item .q-body .q-meta{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}
+.q-item .q-body .q-text{color:var(--text);font-size:14px;line-height:1.6;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.q-item .q-body .q-note{margin-top:8px;font-size:12px;color:var(--text-mute);font-style:italic}
+.q-item .q-actions{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+.q-item .q-time{font-size:11px;color:var(--text-mute)}
+.empty{text-align:center;padding:60px 20px;color:var(--text-mute)}
+.empty .em-icon{font-size:42px;margin-bottom:10px;opacity:.6}
+.empty h3{color:var(--text-dim);margin-bottom:6px;font-size:16px}
+.stat-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+@media (max-width:880px){.stat-cards{grid-template-columns:repeat(2,1fr)}}
+.stat-card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px}
+.stat-card .sc-label{font-size:12px;color:var(--text-mute)}
+.stat-card .sc-value{font-size:28px;font-weight:700;margin-top:4px;letter-spacing:.5px}
+.stat-card .sc-sub{font-size:12px;color:var(--text-dim);margin-top:2px}
+.bar-row{display:grid;grid-template-columns:90px 1fr 60px;gap:12px;align-items:center;margin-bottom:12px}
+.bar-row .bl-name{font-size:13px;color:var(--text)}
+.bar-track{height:22px;background:var(--bg-soft);border-radius:6px;overflow:hidden}
+.bar-fill{height:100%;border-radius:6px;transition:width .5s ease}
+.bar-row .bl-val{font-size:13px;color:var(--text-dim);text-align:right;font-variant-numeric:tabular-nums}
+.pit-rank-item{display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-bottom:1px dashed var(--border)}
+.pit-rank-item:last-child{border-bottom:none}
+.pit-rank-num{width:26px;height:26px;border-radius:50%;background:var(--bg-soft);color:var(--text-dim);display:grid;place-items:center;font-size:13px;font-weight:700;flex-shrink:0}
+.pit-rank-item.top1 .pit-rank-num{background:var(--accent);color:#0f1420}
+.pit-rank-item.top2 .pit-rank-num{background:#c0c8da;color:#0f1420}
+.pit-rank-item.top3 .pit-rank-num{background:#c98b5a;color:#0f1420}
+.pit-rank-body .prb-head{display:flex;gap:8px;align-items:center;margin-bottom:4px;flex-wrap:wrap}
+.pit-rank-body .prb-count{font-size:12px;color:var(--text-mute)}
+.pit-rank-body .prb-pit{font-size:13px;color:var(--text-dim)}
+.trend-chart{display:flex;align-items:flex-end;gap:4px;height:140px;padding-top:10px}
+.trend-bar{flex:1;background:linear-gradient(180deg,var(--primary),rgba(79,156,249,.3));border-radius:4px 4px 0 0;min-height:4px;position:relative;transition:height .4s ease}
+.trend-bar:hover{background:linear-gradient(180deg,var(--accent),rgba(255,181,71,.3))}
+.trend-bar .tb-tip{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);font-size:11px;color:var(--text-dim);margin-bottom:4px;white-space:nowrap}
+.trend-x{display:flex;gap:4px;margin-top:8px}
+.trend-x span{flex:1;text-align:center;font-size:11px;color:var(--text-mute)}
+.tabbar{position:fixed;bottom:0;left:0;right:0;z-index:50;display:flex;background:rgba(22,29,46,.95);backdrop-filter:blur(10px);border-top:1px solid var(--border);max-width:var(--maxw);margin:0 auto}
+.tabbar a{flex:1;padding:12px 0;text-align:center;color:var(--text-mute);font-size:12px;display:flex;flex-direction:column;align-items:center;gap:3px}
+.tabbar a .tb-ico{font-size:18px}
+.tabbar a.active{color:var(--primary)}
+.tabbar a:hover{text-decoration:none;color:var(--text)}
+@media (min-width:880px){.tabbar{display:none}}
+@media (max-width:880px){.topbar .nav{display:none}.main{padding-bottom:80px}}
+.toast-container{position:fixed;top:16px;right:16px;z-index:200;display:flex;flex-direction:column;gap:8px}
+.toast{background:var(--panel-2);border:1px solid var(--border);border-left:4px solid var(--primary);padding:12px 16px;border-radius:8px;min-width:220px;box-shadow:var(--shadow);font-size:13px;animation:toastIn .25s ease}
+.toast.success{border-left-color:var(--success)}
+.toast.error{border-left-color:var(--danger)}
+.toast.warn{border-left-color:var(--warn)}
+@keyframes toastIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:none}}
+.modal-overlay{position:fixed;inset:0;z-index:150;background:rgba(8,12,20,.7);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:20px;animation:fadeIn .15s ease}
+.modal{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);width:100%;max-width:640px;max-height:86vh;overflow-y:auto;box-shadow:var(--shadow)}
+.modal-head{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--panel)}
+.modal-head h3{font-size:16px}
+.modal-body{padding:20px}
+.modal-foot{padding:14px 20px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:10px;position:sticky;bottom:0;background:var(--panel)}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.modal-body .detail-meta{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.modal-body .detail-img{max-width:100%;border-radius:8px;border:1px solid var(--border);margin-bottom:12px}
+.modal-body .detail-text{background:var(--bg-soft);padding:14px;border-radius:8px;font-size:14px;line-height:1.7;white-space:pre-wrap;margin-bottom:12px}
+.modal-body .section-label{font-size:12px;color:var(--text-mute);margin:14px 0 6px;text-transform:uppercase;letter-spacing:.5px}
+.muted{color:var(--text-mute)}
+.row-gap{display:flex;gap:8px;flex-wrap:wrap}
+.mt-12{margin-top:12px}
+.mb-12{margin-bottom:12px}
+.text-center{text-align:center}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast-container" class="toast-container"></div>
+<div id="modal-root"></div>
+
+<script>
+/* ============================================================
+ * data.js — 行测错题诊断知识库
+ * ============================================================ */
+const MODULES = {
+  speech: { key:"speech", name:"言语理解", short:"言语", color:"var(--m-speech)", icon:"📖" },
+  judge:  { key:"judge",  name:"判断推理", short:"判断", color:"var(--m-judge)",  icon:"🧩" },
+  data:   { key:"data",   name:"资料分析", short:"资料", color:"var(--m-data)",   icon:"📊" },
+  quant:  { key:"quant",  name:"数量关系", short:"数量", color:"var(--m-quant)",  icon:"🔢" },
+  common: { key:"common", name:"常识判断", short:"常识", color:"var(--m-common)", icon:"🌍" },
+};
+
+const SUBTYPES = [
+  { type:"logic_fill", module:"speech", name:"逻辑填空",
+    logic:"结合语境与逻辑关系（转折、递进、并列、因果）判断空缺处词义，需辨析近义词的侧重点与搭配习惯。",
+    pits:["只看选项词义相近就盲选，忽略上下文逻辑关系（尤其转折后才是重点）","未辨析近义词的语意轻重 / 感情色彩 / 搭配对象差异","第二个空被第一个空带偏，应整体代入验证"] },
+  { type:"fragment_read", module:"speech", name:"片段阅读",
+    logic:"找主旨句，关注关联词（但、因此、可见、也就是说）后的总结性表述；区分主旨与细节。",
+    pits:["把举例 / 列数据当主旨，主旨往往是举例后的结论","选了表述片面或过度引申的选项，主旨应概括全面","主观臆断，选项内容脱离原文凭常识选"] },
+  { type:"sentence_order", module:"speech", name:"语句排序 / 衔接",
+    logic:"通过指代词、关联词、时间顺序、话题一致性确定首句与邻接关系，再验证整体脉络。",
+    pits:["凭语感通读排序，未抓指代词（这、其、该）与关联词（然而、因此）的逻辑钩子","首句判断错，导致后续连锁错误"] },
+
+  { type:"graphic", module:"judge", name:"图形推理",
+    logic:"观察数量规律（点、线、面、素、角、点线一笔画）与位置规律（平移、旋转、翻转、对称）。",
+    pits:["死盯一种规律（如只数线条），忽略面的数量 / 对称性 / 一笔画（奇点数）","位置类题目未分组观察（如奇偶项规律不同）","立体图形忽略公共面、相对面、相邻面关系"] },
+  { type:"definition", module:"judge", name:"定义判断",
+    logic:"提取定义要件（主体、客体、条件、方式、目的、结果），逐要件与选项比对，要件不符即排除。",
+    pits:["未拆解要件，凭感觉整体匹配","选项符合部分要件就选，遗漏关键否定要件（如'不包含''仅限'）","混淆'符合定义'与'属于该类对象'，主体错位"] },
+  { type:"analogy", module:"judge", name:"类比推理",
+    logic:"判断词项间关系（全同、包含、交叉、并列、属性、功能、对应），再结合二级辨析（方向、程度、范畴）。",
+    pits:["只看一级关系（都是并列），忽略二级辨析（自然 vs 人造、必然 vs 或然）","关系方向反了（如'包含'与'被包含'）","题干是必然关系，选项却选了或然关系"] },
+  { type:"logic_judge", module:"judge", name:"逻辑判断（削弱加强/朴素逻辑）",
+    logic:"找论证结构（论点-论据-论证），削弱优先否论据、断桥、他因、否论点；加强优先搭桥、补充论据。",
+    pits:["把'削弱论据'当最强削弱，实际'断桥（切断论据与论点联系）'力度更强","可能性推理选了'无关项'或'诉诸权威'选项","朴素逻辑未充分利用确定信息（如'每个人都说了一半真话'这类约束）"] },
+
+  { type:"data_growth", module:"data", name:"增长 / 增长率",
+    logic:"区分增长量（绝对值）与增长率（相对值），熟记公式：增长率=（现期-基期）/基期；年均增长率用开方修正。",
+    pits:["增长量与增长率混淆，看错问的是'增长多少'还是'增长百分之几'","把'同比'（与上年同期）当'环比'（与上一期）","计算年均增长率时漏开 n 次方或 n 取错期数"] },
+  { type:"data_ratio", module:"data", name:"比重 / 倍数 / 平均数",
+    logic:"现期比重=部分/整体；比重变化需用部分增长率与整体增长率比较判断升降。",
+    pits:["比重与比重变化量混淆：后者需用 (部分率-整体率)/(1+部分率)×现期比重 计算","平均数（如人均产量）把'总数/总人数'的分子分母写反","倍数题把'A是B几倍'（A/B）算成'A比B多几倍'（A/B-1）"] },
+  { type:"data_comprehensive", module:"data", name:"综合分析（说法判断）",
+    logic:"逐项验证四个说法的正确性，优先验证带'约、最、均、首'等绝对表述或易定位数据的说法。",
+    pits:["四个说法逐字硬算耗时，应优先验证易排除项（数据明显不符 / 表述绝对化）","把'正确的是'与'错误的是'看反","材料单位（万、亿、%）换算出错"] },
+
+  { type:"math_op", module:"quant", name:"数学运算",
+    logic:"优先代入排除、特值、方程、比例法；行程、工程、利润、排列组合、概率分类套用模型。",
+    pits:["硬算不优先用代入排除 / 特值法，耗时且易错","行程问题未分清'相遇/追及'，或漏算往返时间","排列组合混淆'有序排列A'与'无序组合C'，或重复/遗漏","概率题漏乘或错把'至少一个'用对立事件简化"] },
+  { type:"number_seq", module:"quant", name:"数字推理",
+    logic:"观察作差、作商、作和、分组（交叉、两两分组）、递推（倍数±常数、平方/立方修正）。",
+    pits:["只作一次差，未作二次差或多级差","未尝试交叉数列（奇数项与偶数项分别成规律）","忽略分数 / 小数数列与多次方数列（如 2,3,10 取近幂修正）"] },
+
+  { type:"common_politics", module:"common", name:"政治 / 时政",
+    logic:"识记最新重大会议、政策表述、根本/基本制度的准确表述，注意'最''根本''基本'等限定。",
+    pits:["把'根本制度'与'基本制度'混淆（如根本政治制度是人大制度）","时政表述记不精准，多字少字失分"] },
+  { type:"common_law", module:"common", name:"法律",
+    logic:"依宪法、民法典、刑法、行政法等法条判断，注意主体适格、程序正当、时效与例外规定。",
+    pits:["凭朴素的'公平感'判断，忽略法条具体规定（如诉讼时效、刑事责任年龄）","混淆'应当'（必须）与'可以'（授权）","宪法题把国家机构职权张冠李戴"] },
+  { type:"common_other", module:"common", name:"经济 / 科技 / 人文 / 国情",
+    logic:"广覆盖识记题，结合排除法：绝对化表述（都、一定、只有）多为错项。",
+    pits:["绝对化表述未优先怀疑（'所有''唯一''必然'常为错）","经济题混淆 GDP 与 GNP、CPI 与 PPI","历史人物 / 成就对应记串（如把某发明安错朝代）"] },
+];
+
+const SUBTYPE_MAP = SUBTYPES.reduce((m,s)=>(m[s.type]=s,m),{});
+
+const RULES = [
+  { module:"speech", type:"logic_fill", keywords:["填入横线","填入划线","最恰当的一项","依次填入","最合适的是","恰当的是","横线处"], reason:"出现'填入/横线/恰当'等标志词，属逻辑填空" },
+  { module:"speech", type:"fragment_read", keywords:["这段文字意在说明","意在强调","主要说明","概括最准确","根据这段文字","这段话主要","对这段文字","作者意在","这段文字主要"], reason:"问'这段文字意在/主要/概括'，属片段阅读主旨题" },
+  { module:"speech", type:"sentence_order", keywords:["排序","语序正确","衔接最恰当","填入文中","接下来最有可能","语句顺序"], reason:"出现'排序/语序/衔接'，属语句排序或衔接" },
+
+  { module:"judge", type:"graphic", keywords:["图形","下列选项中","规律的是","问号处","九宫格","立体图形","折叠","展开图"], reason:"题干描述图形 / 规律 / 折叠，属图形推理" },
+  { module:"judge", type:"definition", keywords:["定义","属于","不属于","符合定义","根据上述定义","定义给定的"], reason:"出现'定义/属于/符合定义'，属定义判断" },
+  { module:"judge", type:"analogy", keywords:["之于","对于","相当于","类比","关系最接近","关系最为贴近"], reason:"出现'之于/相当于/类比'，属类比推理" },
+  { module:"judge", type:"logic_judge", keywords:["削弱","加强","支持","质疑","反驳","前提","由此可以推出","以下哪项为真","假设","论证","最能解释"], reason:"出现'削弱/加强/前提/推出/论证'，属逻辑判断" },
+
+  { module:"data", type:"data_growth", keywords:["增长率","增长了","增长速度","同比","环比","年均增长","增速","增幅"], reason:"问增长 / 增速 / 同比环比，属资料分析-增长" },
+  { module:"data", type:"data_ratio", keywords:["比重","占比","倍数","是几倍","多几倍","平均","人均","每万","占"], reason:"问比重 / 倍数 / 平均，属资料分析-比重倍数平均" },
+  { module:"data", type:"data_comprehensive", keywords:["能够从资料","根据所给资料","以下说法正确","以下说法错误","能够推出","无法判断"], reason:"问'说法正确/错误/无法推出'，属资料分析-综合判断" },
+
+  { module:"quant", type:"math_op", keywords:["甲乙","同时出发","多少","比例","概率","排列","组合","至少","至多","完成","工程","利润","成本","行程","速度","多少天","多少个","方程"], reason:"含'甲乙/出发/概率/排列/利润/工程'等，属数学运算" },
+  { module:"quant", type:"number_seq", keywords:["数列","下一个","填入数列","规律填数","括号处应填"], reason:"出现'数列/下一个/规律填数'，属数字推理" },
+
+  { module:"common", type:"common_politics", keywords:["根本制度","基本制度","宪法","全国人大","人民代表大会","宗旨","执政","习近平","中国特色","新时代","建设","二十大","十九大"], reason:"涉制度 / 时政表述，属常识-政治" },
+  { module:"common", type:"common_law", keywords:["刑法","民事","诉讼","权利","义务","合同","婚姻","继承","行政处罚","犯罪","判决","法条","效力"], reason:"涉法律 / 权利义务 / 诉讼，属常识-法律" },
+  { module:"common", type:"common_other", keywords:["GDP","GNP","CPI","经济","下列说法正确","下列表述","历史","朝代","发明","科技","地理","气候","文化","作者","作品"], reason:"涉经济科技人文国情，属常识-其他" },
+];
+
+const MODULE_FALLBACK = {
+  speech:["阅读","文字","词语","语意","语境"],
+  judge:["推理","推演","规律","逻辑","判断"],
+  data:["资料","材料","图表","统计","万人","亿元","占比"],
+  quant:["计算","求解","等于","多少","个","天","米","件"],
+  common:["常识","下列","说法","表述","正确的是"],
+};
+
+window.XC = window.XC || {};
+Object.assign(window.XC, { MODULES, SUBTYPES, SUBTYPE_MAP, RULES, MODULE_FALLBACK });
+
+/* ============================================================
+ * analyzer.js
+ * ============================================================ */
+const Analyzer = (() => {
+  const { MODULES, SUBTYPES, SUBTYPE_MAP, RULES, MODULE_FALLBACK } = window.XC;
+
+  function matchRule(text, rule) {
+    const hits = [];
+    for (const kw of rule.keywords) if (text.indexOf(kw) !== -1) hits.push(kw);
+    return { hits: hits.length, words: hits };
+  }
+
+  function analyze(rawText) {
+    const text = (rawText || "").replace(/\s+/g, " ").trim();
+    if (!text) return { module:null, moduleScore:0, subtype:null, subtypeScore:0, confidence:0, reasoning:"未输入题目内容，无法分析。", matched:[], pits:[], logic:null, unknown:true };
+
+    const typeScores = {}, moduleScores = {}, matchedWords = {}, matchedReasons = {};
+    for (const rule of RULES) {
+      const { hits, words } = matchRule(text, rule);
+      if (hits > 0) {
+        typeScores[rule.type] = (typeScores[rule.type]||0) + hits;
+        moduleScores[rule.module] = (moduleScores[rule.module]||0) + hits;
+        if (!matchedWords[rule.type]) matchedWords[rule.type] = [];
+        matchedWords[rule.type].push(...words);
+        matchedReasons[rule.type] = rule.reason;
+      }
+    }
+
+    let bestType = null, bestTypeScore = 0;
+    for (const t in typeScores) if (typeScores[t] > bestTypeScore) { bestTypeScore = typeScores[t]; bestType = t; }
+
+    let bestModule = null, bestModuleScore = 0;
+    for (const m in moduleScores) if (moduleScores[m] > bestModuleScore) { bestModuleScore = moduleScores[m]; bestModule = m; }
+
+    let usedFallback = false;
+    if (!bestModule) {
+      for (const m in MODULE_FALLBACK) {
+        for (const kw of MODULE_FALLBACK[m]) {
+          if (text.indexOf(kw) !== -1) {
+            moduleScores[m] = (moduleScores[m]||0) + 1;
+            if (!bestModule || moduleScores[m] > bestModuleScore) { bestModule = m; bestModuleScore = moduleScores[m]; }
+            usedFallback = true;
+          }
+        }
+      }
+    }
+
+    if (!bestModule) return { module:null, moduleScore:0, subtype:null, subtypeScore:0, confidence:0, reasoning:"未匹配到明显的行测题型特征词，请手动选择模块与题型。", matched:[], pits:[], logic:null, unknown:true };
+
+    let confidence = Math.min(95, 35 + bestModuleScore * 18);
+    if (usedFallback) confidence = Math.min(confidence, 45);
+    if (!bestType) confidence = Math.min(confidence, 55);
+
+    let pits = [], logic = null, subtypeKey = null, subtypeScore = 0, reasoning = "";
+    if (bestType) {
+      const st = SUBTYPE_MAP[bestType];
+      subtypeKey = bestType; subtypeScore = bestTypeScore;
+      pits = st.pits; logic = st.logic;
+      reasoning = `命中题型【${st.name}】（${MODULES[st.module].name}）。${matchedReasons[bestType]}。共匹配 ${bestTypeScore} 个特征词：${[...new Set(matchedWords[bestType])].join("、")}。`;
+    } else {
+      reasoning = `判断为【${MODULES[bestModule].name}】模块，但未能精确到具体题型。命中的模块特征词较少，建议手动选择题型以获得对应踩坑提示。`;
+    }
+
+    const matched = [];
+    for (const t in matchedWords) {
+      const st = SUBTYPE_MAP[t];
+      matched.push({ module:st.module, type:t, typeName:st.name, words:[...new Set(matchedWords[t])], score:typeScores[t] });
+    }
+    matched.sort((a,b)=>b.score-a.score);
+
+    return { module:bestModule, moduleScore:bestModuleScore, subtype:subtypeKey, subtypeScore, confidence:Math.round(confidence), reasoning, matched, pits, logic, unknown:false };
+  }
+
+  function getPreset(moduleKey, subtypeKey) {
+    if (subtypeKey && SUBTYPE_MAP[subtypeKey]) return { pits: SUBTYPE_MAP[subtypeKey].pits, logic: SUBTYPE_MAP[subtypeKey].logic };
+    if (moduleKey) {
+      const list = SUBTYPES.filter(s => s.module === moduleKey);
+      return { pits: list.flatMap(s => s.pits), logic: list.map(s => s.name + "：" + s.logic).join("\n") };
+    }
+    return { pits: [], logic: "" };
+  }
+
+  return { analyze, getPreset };
+})();
+window.XC.Analyzer = Analyzer;
+
+/* ============================================================
+ * store.js
+ * ============================================================ */
+const Store = (() => {
+  const KEY = "xc_records_v1";
+  function load() { try { const raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : []; } catch(e){ console.warn("load fail",e); return []; } }
+  function save(arr) { try { localStorage.setItem(KEY, JSON.stringify(arr)); } catch(e){ console.error("save fail",e); throw new Error("存储失败：可能截图过大超过浏览器本地配额，请裁剪后再上传。"); } }
+  function uid() { return "q" + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+
+  function getAll() { return load().sort((a,b)=>b.createdAt-a.createdAt); }
+  function getById(id) { return load().find(r=>r.id===id) || null; }
+  function add(record) {
+    const arr = load();
+    const item = Object.assign({ id:uid(), createdAt:Date.now(), text:"", image:null, module:null, subtype:null, analysis:null, pits:[], myAnswer:"", correctAnswer:"", note:"", tags:[] }, record);
+    arr.push(item); save(arr); return item;
+  }
+  function update(id, patch) {
+    const arr = load(); const idx = arr.findIndex(r=>r.id===id);
+    if (idx === -1) return null;
+    arr[idx] = Object.assign({}, arr[idx], patch, { id, createdAt: arr[idx].createdAt });
+    save(arr); return arr[idx];
+  }
+  function remove(id) { const arr = load(); const next = arr.filter(r=>r.id!==id); save(next); return arr.length !== next.length; }
+  function clearAll() { save([]); }
+
+  function stats() {
+    const arr = load(); const total = arr.length;
+    const moduleCounts = {}; for (const m in window.XC.MODULES) moduleCounts[m]=0;
+    arr.forEach(r=>{ if (r.module) moduleCounts[r.module] = (moduleCounts[r.module]||0)+1; });
+    const subtypeCounts = {};
+    arr.forEach(r=>{ if (r.subtype) subtypeCounts[r.subtype] = (subtypeCounts[r.subtype]||0)+1; });
+    const pitMap = {};
+    arr.forEach(r=>{
+      if (!r.pits || !r.pits.length) return;
+      const sub = window.XC.SUBTYPE_MAP[r.subtype] || { name:"未细分" };
+      const mod = window.XC.MODULES[r.module] || { name:"未分类" };
+      r.pits.forEach(p=>{
+        const key = r.module + "|" + (r.subtype||"") + "|" + p;
+        if (!pitMap[key]) pitMap[key] = { module:r.module, subtype:r.subtype, moduleName:mod.name, subtypeName:sub.name, pit:p, count:0 };
+        pitMap[key].count++;
+      });
+    });
+    const pitRank = Object.values(pitMap).sort((a,b)=>b.count-a.count);
+    const trend = buildTrend(arr, 14);
+    const moduleRank = Object.entries(moduleCounts).filter(([k])=>window.XC.MODULES[k]).map(([k,v])=>({ key:k, count:v, ...window.XC.MODULES[k] })).sort((a,b)=>b.count-a.count);
+    const answeredWrong = arr.filter(r=>r.myAnswer && r.correctAnswer && r.myAnswer !== r.correctAnswer).length;
+    return { total, moduleCounts, subtypeCounts, moduleRank, pitRank, trend, answeredWrong, byModuleTop: moduleRank[0] || null };
+  }
+  function buildTrend(arr, days) {
+    const out = []; const today = new Date(); today.setHours(0,0,0,0);
+    const map = {};
+    arr.forEach(r=>{ const d = new Date(r.createdAt); d.setHours(0,0,0,0); const diff = Math.round((today-d)/86400000); if (diff>=0 && diff<days) { const key = formatDate(d); map[key] = (map[key]||0)+1; } });
+    for (let i=days-1; i>=0; i--) { const d = new Date(today); d.setDate(d.getDate()-i); const key = formatDate(d); out.push({ date:key, label:key.slice(5), count: map[key]||0 }); }
+    return out;
+  }
+  function formatDate(d) { const m = String(d.getMonth()+1).padStart(2,"0"); const day = String(d.getDate()).padStart(2,"0"); return `${d.getFullYear()}-${m}-${day}`; }
+
+  return { getAll, getById, add, update, remove, clearAll, stats };
+})();
+window.XC.Store = Store;
+
+/* ============================================================
+ * ui.js
+ * ============================================================ */
+const UI = (() => {
+  const { MODULES, SUBTYPES } = window.XC;
+  function el(html){ const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstElementChild; }
+  function escapeHtml(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
+  function toast(msg, type="info", ms=2200){
+    const box = document.getElementById("toast-container");
+    const t = el(`<div class="toast ${type}">${escapeHtml(msg)}</div>`);
+    box.appendChild(t);
+    setTimeout(()=>{ t.style.opacity="0"; t.style.transition="opacity .25s"; setTimeout(()=>t.remove(),250); }, ms);
+  }
+  function modal({ title="", bodyHTML="", footerHTML="", onMount } = {}){
+    const root = el(`<div class="modal-overlay"><div class="modal" role="dialog" aria-modal="true"><div class="modal-head"><h3>${escapeHtml(title)}</h3><button class="btn btn-ghost btn-sm" data-act="close">✕</button></div><div class="modal-body">${bodyHTML}</div>${footerHTML?`<div class="modal-foot">${footerHTML}</div>`:""}</div></div>`);
+    document.getElementById("modal-root").appendChild(root);
+    const close = ()=>{ root.remove(); };
+    root.addEventListener("click", e=>{ if (e.target===root || e.target.closest('[data-act="close"]')) close(); });
+    document.addEventListener("keydown", function esc(e){ if (e.key==="Escape"){ close(); document.removeEventListener("keydown", esc); } });
+    if (onMount) onMount(root, close);
+    return { close, root };
+  }
+  function confirmDialog(msg, { okText="确定", cancelText="取消", danger=false } = {}){
+    return new Promise(resolve=>{
+      modal({
+        title:"请确认",
+        bodyHTML:`<p style="font-size:14px;line-height:1.7;">${escapeHtml(msg)}</p>`,
+        footerHTML:`<button class="btn" data-act="cancel">${escapeHtml(cancelText)}</button><button class="btn ${danger?"btn-danger":"btn-primary"}" data-act="ok">${escapeHtml(okText)}</button>`,
+        onMount(root, close){ root.addEventListener("click", e=>{ if (e.target.closest('[data-act="ok"]')){ close(); resolve(true); } else if (e.target.closest('[data-act="cancel"]')){ close(); resolve(false); } }); }
+      });
+    });
+  }
+  function moduleTag(key, withName=true){ if (!key || !MODULES[key]) return `<span class="tag tag-muted">未分类</span>`; const m = MODULES[key]; return `<span class="tag tag-${m.key}">${m.icon} ${withName?m.name:m.short}</span>`; }
+  function subtypeTag(subtypeKey){ if (!subtypeKey) return ""; const st = window.XC.SUBTYPE_MAP[subtypeKey]; if (!st) return ""; return `<span class="tag tag-muted">${escapeHtml(st.name)}</span>`; }
+  function moduleOptions(selected){ return `<option value="">— 选择模块 —</option>` + Object.values(MODULES).map(m=>`<option value="${m.key}" ${selected===m.key?"selected":""}>${m.icon} ${m.name}</option>`).join(""); }
+  function subtypeOptions(moduleKey, selected){ if (!moduleKey) return `<option value="">— 先选模块 —</option>`; const list = SUBTYPES.filter(s=>s.module===moduleKey); if (!list.length) return `<option value="">该模块无预设题型</option>`; return `<option value="">— 选择题型（可选）—</option>` + list.map(s=>`<option value="${s.type}" ${selected===s.type?"selected":""}>${escapeHtml(s.name)}</option>`).join(""); }
+  function fileToDataURL(file, maxDim=1280, quality=0.82){
+    return new Promise((resolve,reject)=>{
+      const reader = new FileReader();
+      reader.onerror = ()=>reject(new Error("读取文件失败"));
+      reader.onload = ()=>{
+        const dataURL = reader.result;
+        const img = new Image();
+        img.onload = ()=>{
+          let { width:w, height:h } = img;
+          if (w > maxDim || h > maxDim){ const scale = maxDim / Math.max(w,h); w = Math.round(w*scale); h = Math.round(h*scale); }
+          const cv = document.createElement("canvas"); cv.width=w; cv.height=h;
+          const ctx = cv.getContext("2d"); ctx.drawImage(img,0,0,w,h);
+          resolve(cv.toDataURL("image/jpeg", quality));
+        };
+        img.onerror = ()=>resolve(dataURL);
+        img.src = dataURL;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+  function timeAgo(ts){ const diff = Date.now()-ts; const m = Math.floor(diff/60000); if (m<1) return "刚刚"; if (m<60) return m+" 分钟前"; const h = Math.floor(m/60); if (h<24) return h+" 小时前"; const d = Math.floor(h/24); if (d<30) return d+" 天前"; const date = new Date(ts); return `${date.getMonth()+1}/${date.getDate()}`; }
+  return { el, escapeHtml, toast, modal, confirmDialog, moduleTag, subtypeTag, moduleOptions, subtypeOptions, fileToDataURL, timeAgo };
+})();
+window.XC.UI = UI;
+
+/* ============================================================
+ * app.js
+ * ============================================================ */
+const App = (() => {
+  const { MODULES, SUBTYPES, SUBTYPE_MAP, Analyzer, Store, UI } = window.XC;
+  const $ = (s, r=document) => r.querySelector(s);
+  const $$ = (s, r=document) => [...r.querySelectorAll(s)];
+
+  let addState = resetAddState();
+  function resetAddState(){ return { text:"", image:null, applied:false, module:null, subtype:null }; }
+
+  const routes = { "#/add":renderAdd, "#/list":renderList, "#/stats":renderStats };
+  function currentRoute(){ const h = location.hash || "#/add"; return routes[h] ? h : "#/add"; }
+  function render(){ const app = $("#app"); const route = currentRoute(); app.innerHTML = shell(route); routes[route](); }
+  function navigate(hash){ location.hash = hash; }
+  function shell(route){
+    const navItem = (h,label)=>`<a href="${h}" class="${route===h?"active":""}" data-link="${h}">${label}</a>`;
+    const count = Store.getAll().length;
+    return `<header class="topbar"><div class="brand"><span class="logo">行</span><span>行测错题诊断</span></div><nav class="nav">${navItem("#/add","录入错题")}${navItem("#/list","错题本")}${navItem("#/stats","分析报告")}</nav><div class="spacer"></div><div class="stat-mini">已记录 ${count} 题</div></header><main class="main" id="page"></main><nav class="tabbar"><a href="#/add" class="${route==="#/add"?"active":""}" data-link="#/add"><span class="tb-ico">✎</span>录入</a><a href="#/list" class="${route==="#/list"?"active":""}" data-link="#/list"><span class="tb-ico">▤</span>错题本</a><a href="#/stats" class="${route==="#/stats"?"active":""}" data-link="#/stats"><span class="tb-ico">📊</span>分析</a></nav>`;
+  }
+
+  let analyzeTimer = null;
+
+  function renderAdd(){
+    const page = $("#page");
+    page.innerHTML = `
+      <div class="page-head"><h1>录入错题</h1><p>粘贴题目文字或上传截图，系统会自动判断所属行测模块、题型并提示常见踩坑。</p></div>
+      <div class="grid grid-2">
+        <div>
+          <div class="card">
+            <div class="card-title"><span class="dot"></span>题目内容</div>
+            <div class="form-row">
+              <label>题目文字</label>
+              <textarea id="q-text" placeholder="把题目（含题干和选项）粘贴到这里…&#10;例如：依次填入划横线部分最恰当的一组词是…">${UI.escapeHtml(addState.text)}</textarea>
+              <div class="hint">粘贴题目文字后，下方会自动分析模块与题型。</div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><span class="dot"></span>错题截图（可选）</div>
+            <label class="dropzone" id="dz">
+              <div class="dz-icon">🖼️</div>
+              <div>点击上传或拖入图片</div>
+              <div class="hint">支持 PNG / JPG，会自动压缩存储到本地</div>
+              <input type="file" id="q-file" accept="image/*" />
+            </label>
+            <div id="img-preview"></div>
+          </div>
+        </div>
+        <div>
+          <div class="card" id="analysis-card">
+            <div class="card-title"><span class="dot"></span>智能分析</div>
+            <div id="analysis-out"><p class="muted" style="font-size:13px;">输入或粘贴题目后，这里会出现自动判别结果。</p></div>
+            <div class="mt-12" id="manual-box" style="display:none;">
+              <div class="form-row"><label>模块（可手动修正）</label><select id="m-module">${UI.moduleOptions(addState.module)}</select></div>
+              <div class="form-row"><label>题型（可手动修正）</label><select id="m-subtype">${UI.subtypeOptions(addState.module, addState.subtype)}</select></div>
+              <div class="section-label">常见踩坑（保存时记录你勾选的项）</div>
+              <div id="pits-box"></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title"><span class="dot"></span>补充信息（可选）</div>
+            <div class="form-row"><label>我的错误答案</label><input id="my-ans" type="text" placeholder="例如：B" /></div>
+            <div class="form-row"><label>正确答案</label><input id="ok-ans" type="text" placeholder="例如：D" /></div>
+            <div class="form-row"><label>我的反思 / 易错点</label><textarea id="note" placeholder="为什么做错？下次注意什么…"></textarea></div>
+            <button class="btn btn-primary" data-act="save" style="width:100%;">保存到错题本</button>
+          </div>
+        </div>
+      </div>`;
+
+    if (addState.image) renderImgPreview();
+
+    const ta = $("#q-text");
+    ta.addEventListener("input", ()=>{ addState.text = ta.value; clearTimeout(analyzeTimer); analyzeTimer = setTimeout(runAnalysis, 350); });
+    const fileInput = $("#q-file"); const dz = $("#dz");
+    fileInput.addEventListener("change", ()=>handleFile(fileInput.files[0]));
+    dz.addEventListener("dragover", e=>{ e.preventDefault(); dz.classList.add("drag"); });
+    dz.addEventListener("dragleave", ()=>dz.classList.remove("drag"));
+    dz.addEventListener("drop", e=>{ e.preventDefault(); dz.classList.remove("drag"); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
+    $("#m-module").addEventListener("change", e=>{ addState.module = e.target.value || null; addState.subtype=null; addState.applied=true; $("#m-subtype").innerHTML = UI.subtypeOptions(addState.module, null); refreshPits(); });
+    $("#m-subtype").addEventListener("change", e=>{ addState.subtype = e.target.value || null; addState.applied=true; refreshPits(); });
+    page.addEventListener("click", e=>{
+      if (e.target.closest('[data-act="save"]')) saveRecord();
+      if (e.target.closest('[data-act="remove-img"]')){ addState.image=null; renderImgPreview(); }
+    });
+    if (addState.text.trim()) runAnalysis();
+  }
+
+  function handleFile(file){
+    if (!file) return;
+    if (!file.type.startsWith("image/")){ UI.toast("请上传图片文件","error"); return; }
+    UI.fileToDataURL(file).then(dataURL=>{ addState.image=dataURL; renderImgPreview(); UI.toast("截图已加载","success",1400); }).catch(err=>UI.toast(err.message||"上传失败","error"));
+  }
+  function renderImgPreview(){
+    const box = $("#img-preview"); if (!box) return;
+    if (!addState.image){ box.innerHTML=""; return; }
+    box.innerHTML = `<div class="img-wrap"><img class="preview-img" src="${addState.image}" alt="错题截图" /><button class="rm" data-act="remove-img" title="移除">✕</button></div>`;
+  }
+  function runAnalysis(){
+    const text = addState.text.trim();
+    const out = $("#analysis-out"); const manual = $("#manual-box");
+    if (!text){ out.innerHTML = `<p class="muted" style="font-size:13px;">输入或粘贴题目后，这里会出现自动判别结果。</p>`; manual.style.display="none"; return; }
+    const result = Analyzer.analyze(text); addState.lastAnalysis = result;
+    out.innerHTML = renderAnalysisPreview(result);
+    if (!addState.applied && result.module){
+      addState.module = result.module; addState.subtype = result.subtype;
+      const selM = $("#m-module"); if (selM) selM.value = result.module;
+      const selS = $("#m-subtype"); if (selS) selS.innerHTML = UI.subtypeOptions(result.module, result.subtype);
+      addState.applied = true; manual.style.display=""; refreshPits(result.pits);
+    } else if (addState.applied){ manual.style.display=""; }
+  }
+  function renderAnalysisPreview(r){
+    if (r.unknown) return `<div class="analysis-box" style="border-color:var(--warn);"><div class="ab-row"><span class="ab-label">判别</span><span class="tag tag-muted">未能自动识别</span></div><div class="reasoning">${UI.escapeHtml(r.reasoning)}</div></div>`;
+    const mod = MODULES[r.module]; const sub = r.subtype ? SUBTYPE_MAP[r.subtype] : null;
+    const confBar = `<div style="height:6px;background:var(--bg-soft);border-radius:3px;margin-top:8px;overflow:hidden;"><div style="width:${r.confidence}%;height:100%;background:var(--primary);"></div></div>`;
+    return `<div class="analysis-box"><div class="ab-row"><span class="ab-label">模块</span>${UI.moduleTag(r.module)}${sub?`<span class="ab-label" style="margin-left:10px;">题型</span><span class="tag tag-muted">${UI.escapeHtml(sub.name)}</span>`:""}<span class="confidence" style="margin-left:auto;">置信度 ${r.confidence}%</span></div>${confBar}<div class="reasoning">${UI.escapeHtml(r.reasoning)}</div>${r.logic?`<div class="reasoning" style="margin-top:6px;color:var(--success);"><b>题型逻辑：</b>${UI.escapeHtml(r.logic)}</div>`:""}</div>`;
+  }
+  function refreshPits(forcePits){
+    const box = $("#pits-box"); if (!box) return;
+    const preset = Analyzer.getPreset(addState.module, addState.subtype);
+    const pits = forcePits && forcePits.length ? forcePits : preset.pits;
+    if (!pits.length){ box.innerHTML = `<p class="muted" style="font-size:12px;">该模块/题型暂无预设踩坑，可在保存后于反思中补充。</p>`; return; }
+    box.innerHTML = pits.map(p=>`<label style="display:flex;gap:8px;align-items:flex-start;padding:8px 10px;background:var(--bg-soft);border-radius:6px;margin-bottom:6px;cursor:pointer;font-size:13px;color:var(--text-dim);"><input type="checkbox" class="pit-cb" data-pit="${UI.escapeHtml(p)}" checked style="margin-top:2px;width:auto;" /><span>${UI.escapeHtml(p)}</span></label>`).join("");
+  }
+  function saveRecord(){
+    const text = addState.text.trim();
+    if (!text && !addState.image){ UI.toast("请至少输入题目文字或上传截图","warn"); return; }
+    if (!addState.module){ UI.toast("请选择所属模块（或先粘贴题目让系统识别）","warn"); return; }
+    const pits = $$(".pit-cb:checked").map(cb=>cb.dataset.pit);
+    const record = { text, image:addState.image, module:addState.module, subtype:addState.subtype, analysis:addState.lastAnalysis||null, pits, myAnswer:($("#my-ans")?.value||"").trim(), correctAnswer:($("#ok-ans")?.value||"").trim(), note:($("#note")?.value||"").trim(), tags:[] };
+    try { Store.add(record); UI.toast("已保存到错题本","success"); addState = resetAddState(); navigate("#/list"); }
+    catch(e){ UI.toast(e.message||"保存失败","error",4000); }
+  }
+
+  let filter = { module:"", keyword:"" };
+  function renderList(){
+    const page = $("#page"); const all = Store.getAll();
+    page.innerHTML = `<div class="page-head"><h1>错题本</h1><p>共 ${all.length} 道错题。可按模块筛选、关键词搜索，点击查看与修正。</p></div>
+      <div class="card"><div class="grid grid-3" style="align-items:end;">
+        <div class="form-row" style="margin:0;"><label>按模块筛选</label><select id="f-module"><option value="">全部模块</option>${Object.values(MODULES).map(m=>`<option value="${m.key}" ${filter.module===m.key?"selected":""}>${m.icon} ${m.name}</option>`).join("")}</select></div>
+        <div class="form-row" style="margin:0;"><label>关键词搜索</label><input id="f-kw" type="text" placeholder="搜索题文 / 笔记" value="${UI.escapeHtml(filter.keyword)}" /></div>
+        <div class="form-row" style="margin:0;"><label>&nbsp;</label><button class="btn" data-act="clear-filter" style="width:100%;">重置筛选</button></div>
+      </div></div><div id="q-list" class="mt-12"></div>`;
+    $("#f-module").addEventListener("change", e=>{ filter.module=e.target.value; renderListBody(); });
+    $("#f-kw").addEventListener("input", e=>{ filter.keyword=e.target.value; clearTimeout(analyzeTimer); analyzeTimer=setTimeout(renderListBody,200); });
+    page.addEventListener("click", e=>{
+      if (e.target.closest('[data-act="clear-filter"]')){ filter={module:"",keyword:""}; renderList(); }
+      const card = e.target.closest(".q-item");
+      if (card && !e.target.closest(".q-actions")) openDetail(card.dataset.id);
+      const del = e.target.closest('[data-act="del"]'); if (del){ e.stopPropagation(); askDelete(del.dataset.id); }
+    });
+    renderListBody();
+  }
+  function renderListBody(){
+    const box = $("#q-list"); let list = Store.getAll();
+    if (filter.module) list = list.filter(r=>r.module===filter.module);
+    if (filter.keyword.trim()){ const kw = filter.keyword.trim().toLowerCase(); list = list.filter(r=>(r.text||"").toLowerCase().includes(kw) || (r.note||"").toLowerCase().includes(kw)); }
+    if (!list.length){ box.innerHTML = `<div class="empty"><div class="em-icon">📭</div><h3>暂无错题</h3><p>${Store.getAll().length?"当前筛选条件下没有错题":"去录入第一道错题吧"} <a href="#/add">前往录入</a></p></div>`; return; }
+    box.innerHTML = `<div class="q-list">` + list.map(renderQCard).join("") + `</div>`;
+  }
+  function renderQCard(r){
+    const thumb = r.image ? `<img src="${r.image}" alt="" />` : `<span>无图</span>`;
+    const text = r.text || "（仅有截图，无文字）";
+    return `<div class="q-item" data-id="${r.id}" style="cursor:pointer;"><div class="q-thumb">${thumb}</div><div class="q-body"><div class="q-meta">${UI.moduleTag(r.module)}${UI.subtypeTag(r.subtype)}${r.myAnswer&&r.correctAnswer?`<span class="tag tag-muted">我选 ${UI.escapeHtml(r.myAnswer)} / 正解 ${UI.escapeHtml(r.correctAnswer)}</span>`:""}</div><div class="q-text">${UI.escapeHtml(text)}</div>${r.note?`<div class="q-note">📝 ${UI.escapeHtml(r.note)}</div>`:""}</div><div class="q-actions"><span class="q-time">${UI.timeAgo(r.createdAt)}</span><button class="btn btn-sm" data-act="del" data-id="${r.id}">删除</button></div></div>`;
+  }
+  async function askDelete(id){
+    const ok = await UI.confirmDialog("确定删除这道错题吗？此操作不可撤销。",{okText:"删除",danger:true});
+    if (ok){ Store.remove(id); UI.toast("已删除","success"); renderListBody(); updateTopbarCount(); }
+  }
+  function openDetail(id){
+    const r = Store.getById(id); if (!r){ UI.toast("记录不存在","error"); return; }
+    const bodyHTML = `<div class="detail-meta">${UI.moduleTag(r.module)}${UI.subtypeTag(r.subtype)}<span class="tag tag-muted">${UI.timeAgo(r.createdAt)}</span></div>
+      ${r.image?`<img class="detail-img" src="${r.image}" alt="错题截图" />`:""}
+      ${r.text?`<div class="detail-text">${UI.escapeHtml(r.text)}</div>`:""}
+      ${r.analysis&&r.analysis.reasoning?`<div class="section-label">自动判别</div><div class="reasoning" style="color:var(--text-dim);font-size:13px;">${UI.escapeHtml(r.analysis.reasoning)}</div>`:""}
+      <div class="section-label">修正模块 / 题型</div>
+      <div class="form-row" style="margin-bottom:10px;"><select id="d-module">${UI.moduleOptions(r.module)}</select></div>
+      <div class="form-row" style="margin-bottom:10px;"><select id="d-subtype">${UI.subtypeOptions(r.module, r.subtype)}</select></div>
+      <div class="section-label">常见踩坑（勾选符合本题的）</div>
+      <div id="d-pits"></div>
+      <div class="section-label">答案与反思</div>
+      <div class="grid grid-2" style="margin-bottom:10px;"><input id="d-my" type="text" placeholder="我的错误答案" value="${UI.escapeHtml(r.myAnswer||"")}" /><input id="d-ok" type="text" placeholder="正确答案" value="${UI.escapeHtml(r.correctAnswer||"")}" /></div>
+      <textarea id="d-note" placeholder="反思 / 易错点">${UI.escapeHtml(r.note||"")}</textarea>`;
+    const footerHTML = `<button class="btn btn-danger" data-act="del-detail">删除</button><span style="flex:1"></span><button class="btn" data-act="close">取消</button><button class="btn btn-primary" data-act="save-detail">保存修改</button>`;
+    let cur = { module:r.module, subtype:r.subtype, pits:[...(r.pits||[])] };
+    UI.modal({ title:"错题详情 / 编辑", bodyHTML, footerHTML,
+      onMount(root, close){
+        const pitsBox = $("#d-pits", root);
+        const renderDpits = ()=>{
+          const preset = Analyzer.getPreset(cur.module, cur.subtype);
+          const all = cur.pits.length ? cur.pits : preset.pits;
+          const union = [...new Set([...all, ...preset.pits])];
+          if (!union.length){ pitsBox.innerHTML = `<p class="muted" style="font-size:12px;">该模块/题型暂无预设踩坑。</p>`; return; }
+          pitsBox.innerHTML = union.map(p=>{ const checked = cur.pits.includes(p)?"checked":""; return `<label style="display:flex;gap:8px;align-items:flex-start;padding:8px 10px;background:var(--bg-soft);border-radius:6px;margin-bottom:6px;cursor:pointer;font-size:13px;color:var(--text-dim);"><input type="checkbox" class="d-pit-cb" data-pit="${UI.escapeHtml(p)}" ${checked} style="margin-top:2px;width:auto;" /><span>${UI.escapeHtml(p)}</span></label>`; }).join("");
+        };
+        renderDpits();
+        $("#d-module", root).addEventListener("change", e=>{ cur.module=e.target.value||null; cur.subtype=null; $("#d-subtype", root).innerHTML = UI.subtypeOptions(cur.module, null); cur.pits=[]; renderDpits(); });
+        $("#d-subtype", root).addEventListener("change", e=>{ cur.subtype=e.target.value||null; cur.pits=[]; renderDpits(); });
+        root.addEventListener("click", e=>{
+          if (e.target.closest('[data-act="save-detail"]')){
+            cur.pits = $$(".d-pit-cb:checked", root).map(cb=>cb.dataset.pit);
+            Store.update(r.id, { module:cur.module, subtype:cur.subtype, pits:cur.pits, myAnswer:$("#d-my", root).value.trim(), correctAnswer:$("#d-ok", root).value.trim(), note:$("#d-note", root).value.trim() });
+            UI.toast("已保存修改","success"); close(); renderListBody();
+          }
+          if (e.target.closest('[data-act="del-detail"]')){
+            (async()=>{ const ok = await UI.confirmDialog("确定删除这道错题？",{okText:"删除",danger:true}); if (ok){ Store.remove(r.id); UI.toast("已删除","success"); close(); renderListBody(); updateTopbarCount(); } })();
+          }
+        });
+      }
+    });
+  }
+  function updateTopbarCount(){ const el = $(".topbar .stat-mini"); if (el) el.textContent = "已记录 " + Store.getAll().length + " 题"; }
+
+  function renderStats(){
+    const page = $("#page"); const s = Store.stats();
+    page.innerHTML = `<div class="page-head"><h1>分析报告</h1><p>基于你记录的 ${s.total} 道错题自动汇总，定位薄弱模块与高频踩坑。</p></div>
+      ${s.total===0?`<div class="empty"><div class="em-icon">📊</div><h3>还没有数据</h3><p>先录入几道错题，再来看分析报告 <a href="#/add">前往录入</a></p></div>`:renderStatsBody(s)}
+      <div class="card mt-12" style="margin-top:16px;"><div class="card-title"><span class="dot" style="background:var(--danger);"></span>数据管理</div><div class="row-gap"><button class="btn btn-danger" data-act="clear-all">清空全部错题</button></div><div class="hint" style="margin-top:8px;">数据仅保存在本浏览器（localStorage），清除浏览器数据将丢失，请谨慎操作。</div></div>`;
+    page.addEventListener("click", async e=>{
+      if (e.target.closest('[data-act="clear-all"]')){ const ok = await UI.confirmDialog("确定清空全部错题记录？此操作不可撤销！",{okText:"全部清空",danger:true}); if (ok){ Store.clearAll(); UI.toast("已清空","success"); render(); } }
+    });
+  }
+  function renderStatsBody(s){
+    const maxMod = Math.max(1, ...Object.values(s.moduleCounts));
+    const topPit = s.pitRank[0];
+    const trendMax = Math.max(1, ...s.trend.map(t=>t.count));
+    const totalAnswered = s.answeredWrong;
+    const moduleBars = s.moduleRank.map(m=>`<div class="bar-row"><div class="bl-name">${m.icon} ${m.short}</div><div class="bar-track"><div class="bar-fill" style="width:${(m.count/maxMod*100).toFixed(0)}%;background:${m.color};"></div></div><div class="bl-val">${m.count} 题</div></div>`).join("");
+    const subRows = Object.entries(s.subtypeCounts).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([t,c])=>{ const st = SUBTYPE_MAP[t]; if (!st) return ""; return `<div class="pit-rank-item"><div class="pit-rank-num">${c}</div><div class="pit-rank-body"><div class="prb-head">${UI.moduleTag(st.module,false)} <span style="font-size:13px;">${UI.escapeHtml(st.name)}</span></div></div></div>`; }).join("");
+    const pitRank = s.pitRank.slice(0,6).map((p,i)=>`<div class="pit-rank-item ${i===0?"top1":i===1?"top2":i===2?"top3":""}"><div class="pit-rank-num">${i+1}</div><div class="pit-rank-body"><div class="prb-head">${UI.moduleTag(p.module,false)} ${p.subtypeName?`<span class="tag tag-muted">${UI.escapeHtml(p.subtypeName)}</span>`:""} <span class="prb-count">×${p.count}</span></div><div class="prb-pit">${UI.escapeHtml(p.pit)}</div></div></div>`).join("") || `<p class="muted" style="font-size:13px;">暂无踩坑数据（保存错题时勾选的踩坑会在此统计）。</p>`;
+    const trendBars = s.trend.map(t=>`<div class="trend-bar" style="height:${(t.count/trendMax*100).toFixed(0)}%;">${t.count?`<div class="tb-tip">${t.count}</div>`:""}</div>`).join("");
+    const trendX = s.trend.map(t=>`<span>${t.label}</span>`).join("");
+    const advice = buildAdvice(s);
+    return `<div class="stat-cards">
+        <div class="stat-card"><div class="sc-label">错题总数</div><div class="sc-value">${s.total}</div><div class="sc-sub">${totalAnswered?`已标注 ${totalAnswered} 题错误答案`:"建议补充答案便于复盘"}</div></div>
+        <div class="stat-card"><div class="sc-label">错最多模块</div><div class="sc-value" style="color:${s.byModuleTop?s.byModuleTop.color:"var(--text)"};">${s.byModuleTop?s.byModuleTop.short:"—"}</div><div class="sc-sub">${s.byModuleTop?`${s.byModuleTop.count} 题 · 占 ${(s.byModuleTop.count/s.total*100).toFixed(0)}%`:"暂无数据"}</div></div>
+        <div class="stat-card"><div class="sc-label">最高频踩坑</div><div class="sc-value" style="font-size:18px;line-height:1.3;">${topPit?UI.escapeHtml(truncate(topPit.pit,14)):"—"}</div><div class="sc-sub">${topPit?`×${topPit.count} 次 · ${topPit.subtypeName}`:"暂无"}</div></div>
+        <div class="stat-card"><div class="sc-label">近14天记录</div><div class="sc-value">${s.trend.reduce((a,b)=>a+b.count,0)}</div><div class="sc-sub">${s.trend.filter(t=>t.count).length} 天有记录</div></div>
+      </div>
+      <div class="grid grid-2">
+        <div class="card"><div class="card-title"><span class="dot"></span>各模块错题分布</div>${moduleBars||`<p class="muted">暂无数据</p>`}</div>
+        <div class="card"><div class="card-title"><span class="dot"></span>近 14 天错题趋势</div><div class="trend-chart">${trendBars}</div><div class="trend-x">${trendX}</div></div>
+      </div>
+      <div class="card"><div class="card-title"><span class="dot" style="background:var(--accent);"></span>高频踩坑 Top 6</div>${pitRank}</div>
+      <div class="grid grid-2">
+        <div class="card"><div class="card-title"><span class="dot" style="background:var(--success);"></span>题型分布</div>${subRows||`<p class="muted" style="font-size:13px;">暂无题型数据。</p>`}</div>
+        <div class="card"><div class="card-title"><span class="dot" style="background:var(--primary);"></span>🎯 个性化诊断建议</div>${advice}</div>
+      </div>`;
+  }
+  function buildAdvice(s){
+    if (!s.total) return `<p class="muted">暂无数据。</p>`;
+    const top = s.byModuleTop; if (!top) return `<p class="muted">暂无模块数据。</p>`;
+    const list = SUBTYPES.filter(st=>st.module===top.key);
+    const topPits = s.pitRank.filter(p=>p.module===top.key).slice(0,3);
+    let html = `<div style="font-size:13px;line-height:1.8;color:var(--text-dim);">你在 <b style="color:${top.color};">${top.name}</b> 模块错题最多（${top.count} 题，占 ${(top.count/s.total*100).toFixed(0)}%），建议优先突破。该模块含 ${list.length} 类题型，重点题型与常见坑如下：</div><div class="mt-12">`;
+    list.forEach(st=>{ const cnt = s.subtypeCounts[st.type]||0; html += `<div style="margin-bottom:10px;"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;"><b>${UI.escapeHtml(st.name)}</b><span class="muted">${cnt} 题</span></div><ul style="margin:0;padding-left:18px;font-size:12px;color:var(--text-dim);">${st.pits.slice(0,3).map(p=>`<li>${UI.escapeHtml(p)}</li>`).join("")}</ul></div>`; });
+    html += `</div>`;
+    if (topPits.length){ html += `<div class="section-label" style="margin-top:8px;">你在该模块最常踩的坑</div><ul style="margin:0;padding-left:18px;font-size:12px;color:var(--accent);">`; topPits.forEach(p=>html+=`<li>×${p.count} · ${UI.escapeHtml(p.pit)}</li>`); html += `</ul>`; }
+    return html;
+  }
+  function truncate(s,n){ return s.length>n?s.slice(0,n)+"…":s; }
+
+  function start(){
+    window.addEventListener("hashchange", ()=>{ render(); window.scrollTo(0,0); });
+    render();
+  }
+  return { start };
+})();
+
+document.addEventListener("DOMContentLoaded", App.start);
+</script>
+</body>
+</html>
