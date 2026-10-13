@@ -643,12 +643,15 @@ const App = (() => {
           <div class="card" id="analysis-card">
             <div class="card-title"><span class="dot"></span>智能分析</div>
             <div id="analysis-out"><p class="muted" style="font-size:13px;">输入或粘贴题目后，这里会出现自动判别结果。</p></div>
-            <div class="mt-12" id="manual-box" style="display:none;">
-              <div class="form-row"><label>模块（可手动修正）</label><select id="m-module">${UI.moduleOptions(addState.module)}</select></div>
-              <div class="form-row"><label>题型（可手动修正）</label><select id="m-subtype">${UI.subtypeOptions(addState.module, addState.subtype)}</select></div>
-              <div class="section-label">常见踩坑（保存时记录你勾选的项）</div>
-              <div id="pits-box"></div>
+          </div>
+          <div class="card">
+            <div class="card-title"><span class="dot" style="background:var(--primary);"></span>模块 & 题型（必选）</div>
+            <div class="grid grid-2">
+              <div class="form-row" style="margin:0;"><label>所属模块</label><select id="m-module">${UI.moduleOptions(addState.module)}</select></div>
+              <div class="form-row" style="margin:0;"><label>具体题型</label><select id="m-subtype">${UI.subtypeOptions(addState.module, addState.subtype)}</select></div>
             </div>
+            <div class="section-label">常见踩坑（保存时记录你勾选的项）</div>
+            <div id="pits-box"></div>
           </div>
           <div class="card">
             <div class="card-title"><span class="dot"></span>答题信息</div>
@@ -709,16 +712,16 @@ const App = (() => {
   }
   function runAnalysis(){
     const text = addState.text.trim();
-    const out = $("#analysis-out"); const manual = $("#manual-box");
-    if (!text){ out.innerHTML = `<p class="muted" style="font-size:13px;">输入或粘贴题目后，这里会出现自动判别结果。</p>`; manual.style.display="none"; return; }
+    const out = $("#analysis-out");
+    if (!text){ out.innerHTML = `<p class="muted" style="font-size:13px;">输入或粘贴题目后，这里会出现自动判别结果。</p>`; return; }
     const result = Analyzer.analyze(text); addState.lastAnalysis = result;
     out.innerHTML = renderAnalysisPreview(result);
     if (!addState.applied && result.module){
       addState.module = result.module; addState.subtype = result.subtype;
       const selM = $("#m-module"); if (selM) selM.value = result.module;
       const selS = $("#m-subtype"); if (selS) selS.innerHTML = UI.subtypeOptions(result.module, result.subtype);
-      addState.applied = true; manual.style.display=""; refreshPits(result.pits);
-    } else if (addState.applied){ manual.style.display=""; }
+      addState.applied = true; refreshPits(result.pits);
+    }
   }
   function renderAnalysisPreview(r){
     if (r.unknown) return `<div class="analysis-box" style="border-color:var(--warn);"><div class="ab-row"><span class="ab-label">判别</span><span class="tag tag-muted">未能自动识别</span></div><div class="reasoning">${UI.escapeHtml(r.reasoning)}</div></div>`;
