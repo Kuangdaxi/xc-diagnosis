@@ -580,7 +580,43 @@ const App = (() => {
     if (r.unknown) return `<div class="analysis-box" style="border-color:var(--warn);"><div class="ab-row"><span class="ab-label">判别</span><span class="tag tag-muted">未能自动识别</span></div><div class="reasoning">${UI.escapeHtml(r.reasoning)}</div></div>`;
     const mod = MODULES[r.module]; const sub = r.subtype ? SUBTYPE_MAP[r.subtype] : null;
     const confBar = `<div style="height:6px;background:var(--bg-soft);border-radius:3px;margin-top:8px;overflow:hidden;"><div style="width:${r.confidence}%;height:100%;background:var(--primary);"></div></div>`;
-    return `<div class="analysis-box"><div class="ab-row"><span class="ab-label">模块</span>${UI.moduleTag(r.module)}${sub?`<span class="ab-label" style="margin-left:10px;">题型</span><span class="tag tag-muted">${UI.escapeHtml(sub.name)}</span>`:""}<span class="confidence" style="margin-left:auto;">置信度 ${r.confidence}%</span></div>${confBar}<div class="reasoning">${UI.escapeHtml(r.reasoning)}</div>${r.logic?`<div class="reasoning" style="margin-top:6px;color:var(--success);"><b>题型逻辑：</b>${UI.escapeHtml(r.logic)}</div>`:""}</div>`;
+
+    // --- 错题拆解详细展示 ---
+    let breakdown = "";
+    if (sub) {
+      // 考点
+      breakdown += `<div style="margin-top:12px;padding:10px 12px;background:rgba(79,156,249,.08);border-left:3px solid var(--primary);border-radius:0 8px 8px 0;"><b style="color:var(--primary);font-size:12px;">📌 考点拆解</b><div style="margin-top:4px;font-size:13px;color:var(--text-dim);line-height:1.7;">${UI.escapeHtml(sub.logic)}</div></div>`;
+      // 踩坑预警
+      breakdown += `<div style="margin-top:10px;"><b style="color:var(--accent);font-size:12px;">⚠️ 高频踩坑预警</b>`;
+      sub.pits.forEach((p,i)=>{
+        breakdown += `<div style="margin-top:4px;padding:6px 10px;background:rgba(255,181,71,.06);border-left:2px solid var(--accent);border-radius:0 6px 6px 0;font-size:12px;color:var(--text-dim);">${i+1}. ${UI.escapeHtml(p)}</div>`;
+      });
+      breakdown += `</div>`;
+      // 举一反三
+      const moduleHints = {
+        speech: "遇到言语题先抓关联词（但/因此/可见），主旨题选'全面概括'不选'片面细节'；逻辑填空先看逻辑关系再辨析词义。",
+        judge: "图形推理先看数量（点线面）再看位置；定义判断逐要件比对；逻辑判断先找论点再看削弱/加强方向。",
+        data: "资料分析先看问题再找数据，增长率=（现期-基期）/基期；比重变化看部分率vs整体率；综合题先验易排除项。",
+        quant: "数学运算优先代入排除/特值法；行程分清相遇追及；排列组合A有序C无序；概率善用对立事件。",
+        common: "常识题优先排除绝对化表述（所有/一定/唯一）；时政记关键词；法律区分应当vs可以。"
+      };
+      const hint = moduleHints[r.module] || "";
+      if (hint) {
+        breakdown += `<div style="margin-top:10px;padding:10px 12px;background:rgba(79,209,165,.08);border-radius:8px;font-size:12px;color:var(--text-dim);line-height:1.7;">💡 <b style="color:var(--success);">举一反三</b>：${UI.escapeHtml(hint)}</div>`;
+      }
+    } else {
+      // 仅模块级别
+      const modHints = {
+        speech: "言语理解核心：抓关键词（转折/递进/因果关联词后是重点）、辨析近义词侧重点、区分主旨vs细节。",
+        judge: "判断推理核心：图形看规律（数量+位置）、定义拆要件逐一对比、类比看关系+二级辨析、逻辑找论证结构。",
+        data: "资料分析核心：先看问题再找材料、增长率/比重/倍数公式记牢、综合题优先排除易判选项。",
+        quant: "数量关系核心：优先代入排除/特值法、行程工程套用模型、排列组合注意有序/无序。",
+        common: "常识判断核心：绝对化表述优先排除、时政记关键词、法律区分应当/可以、经济记易混概念。"
+      };
+      breakdown += `<div style="margin-top:12px;padding:10px 12px;background:rgba(79,156,249,.08);border-left:3px solid var(--primary);border-radius:0 8px 8px 0;"><b style="color:var(--primary);font-size:12px;">📌 模块备考重点</b><div style="margin-top:4px;font-size:13px;color:var(--text-dim);line-height:1.7;">${UI.escapeHtml(modHints[r.module]||"")}</div><div class="muted" style="font-size:11px;margin-top:6px;">💡 建议手动选择具体题型，获取更精准的拆解</div></div>`;
+    }
+
+    return `<div class="analysis-box"><div class="ab-row"><span class="ab-label">模块</span>${UI.moduleTag(r.module)}${sub?`<span class="ab-label" style="margin-left:10px;">题型</span><span class="tag tag-muted">${UI.escapeHtml(sub.name)}</span>`:""}<span class="confidence" style="margin-left:auto;">置信度 ${r.confidence}%</span></div>${confBar}<div class="reasoning">${UI.escapeHtml(r.reasoning)}</div>${breakdown}</div>`;
   }
   function refreshPits(forcePits){
     const box = $("#pits-box"); if (!box) return;
