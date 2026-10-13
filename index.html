@@ -747,7 +747,9 @@ const App = (() => {
             </label>
             <div id="img-preview"></div>
             <div id="ocr-btn-wrap" style="display:none;margin-top:10px;">
-              <button class="btn btn-primary" data-act="ocr-extract" style="width:100%;background:linear-gradient(135deg,#4f9cf9,#7c3aed);border:none;">📷 OCR 识别图片中的文字（自动填入题目框）</button>
+              <button class="btn btn-primary" data-act="vision-ai" style="width:100%;background:linear-gradient(135deg,#667eea,#764ba2);border:none;padding:12px;font-size:15px;">🖼️ AI 看图一键解析（需要 API Key）</button>
+              <div style="margin-top:6px;text-align:center;font-size:11px;color:var(--text-mute);">把题目图片发给 AI，自动识别文字+拆解+填入所有字段</div>
+              <button class="btn" data-act="ocr-extract" style="width:100%;margin-top:8px;background:var(--bg-soft);">📷 仅识别文字（OCR，不需要联网）</button>
               <div id="ocr-status" style="margin-top:8px;font-size:12px;color:var(--text-dim);"></div>
             </div>
           </div>
@@ -825,6 +827,17 @@ const App = (() => {
       if (e.target.closest('[data-act="ai-save-cancel"]')){ document.querySelector(".modal-overlay")?.remove(); }
       if (e.target.closest('[data-act="ocr-extract"]')) runOCR();
       if (e.target.closest('[data-act="crop-img"]')) openCropModal();
+      if (e.target.closest('[data-act="vision-ai"]')) runVisionAI();
+      if (e.target.closest('[data-act="vision-save"]')){
+        const k = $("#vision-key")?.value?.trim();
+        const m = $("#vision-model")?.value?.trim();
+        if (!k){ UI.toast("请填写 API Key","warn"); return; }
+        localStorage.setItem("xc_api_key", k);
+        if (m) localStorage.setItem("xc_api_vision_model", m);
+        document.querySelector(".modal-overlay")?.remove();
+        UI.toast("API Key 已保存，开始 AI 看图解析…","success"); runVisionAI();
+      }
+      if (e.target.closest('[data-act="vision-cancel"]')){ document.querySelector(".modal-overlay")?.remove(); }
     });
     if (addState.text.trim()) runAnalysis();
   }
@@ -923,6 +936,106 @@ const App = (() => {
         });
       }
     });
+  }
+
+  // === AI 看图一键解析 ===
+  async function runVisionAI(){
+    if (!addState.image){ UI.toast("请先上传图片","warn"); return; }
+    const key = localStorage.getItem("xc_api_key");
+    if (!key){ UI.modal({ title:"🔑 还没设置 API Key", bodyHTML:`
+      <div style="padding:8px 0;">
+        <p style="margin:0 0 10px;font-size:14px;">AI 看图解析需要调用视觉模型 API。</p>
+        <p class="muted" style="margin:0 0 12px;font-size:12px;">最简单的方式：注册 <a href="https://cloud.siliconflow.cn/" target="_blank" style="color:var(--primary);">硅基流动</a>（免费送额度），创建 API Key 粘贴到下方。</p>
+        <label style="font-size:13px;color:var(--text-dim);">API Key</label>
+        <input id="vision-key" placeholder="sk-xxxxxx" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin:4px 0 10px;" />
+        <label style="font-size:13px;color:var(--text-dim);">模型（默认 Qwen2.5-VL）</label>
+        <input id="vision-model" value="${localStorage.getItem('xc_api_vision_model')||'Qwen/Qwen2.5-VL-7B-Instruct'}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin:4px 0 10px;font-size:12px;" />
+        <p class="muted" style="margin:8px 0 0;font-size:11px;">💡 已填过 API Key？直接点下方"设置 API Key + 联网解析"按钮复用。</p>
+      </div>`, footerHTML:`<button class="btn" data-act="vision-cancel">取消</button><button class="btn btn-primary" data-act="vision-save">保存并解析</button>` }); return; }
+    const endpoint = localStorage.getItem("xc_api_endpoint") || "https://api.siliconflow.cn/v1/chat/completions";
+    const model = localStorage.getItem("xc_api_vision_model") || "Qwen/Qwen2.5-VL-7B-Instruct";
+
+    const status = $("#ocr-status");
+    const btn = document.querySelector('[data-act="vision-ai"]');
+    if (btn) btn.disabled = true; btn.textContent = "⏳ AI 正在看图解析…";
+    status.innerText = "发送图片给视觉模型…";
+
+    // 压缩图片到 base64
+    let imageData = addState.image;
+    if (imageData.length > 2000000) {
+      const canvas = document.createElement("canvas"); const ctx = canvas.getContext("2d");
+      const img = new Image(); img.crossOrigin = "anonymous";
+      await new Promise((res,rej)=>{ img.onload = res; img.onerror = rej; img.src = imageData; });
+      const maxW = 1200, maxH = 1600; let w = img.naturalWidth, h = img.naturalHeight;
+      if (w > maxW || h > maxH){ const r = Math.min(maxW/w, maxH/h); w = Math.round(w*r); h = Math.round(h*r); }
+      canvas.width = w; canvas.height = h; ctx.drawImage(img, 0, 0, w, h);
+      imageData = canvas.toDataURL("image/jpeg", 0.8);
+    }
+
+    const prompt = `请识别这张图片中的公务员考试行测题目，然后进行深度解析。
+
+请严格按以下 JSON 格式返回（用中文，不要返回 JSON 以外的任何内容）：
+{
+  "text": "完整的题目文字，包含题干和所有选项",
+  "module": "以下之一：speech（言语理解）/judge（判断推理）/data（资料分析）/quant（数量关系）/common（常识判断）",
+  "myAnswer": "如果图片中标注了你选的错误答案，这里填字母；否则留空字符串",
+  "correctAnswer": "如果图片中标注了正确答案，这里填字母；否则根据题目内容推断正确答案字母",
+  "analysis": {
+    "correctReason": "正确选项为什么对的详细分析，紧扣考点和逻辑",
+    "wrongReason": "逐个分析每个错误选项为什么错，指出陷阱类型",
+    "skillReason": "这类题的通用解题技巧和避坑要点"
+  }
+}`;
+
+    try {
+      const resp = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type":"application/json", "Authorization":"Bearer "+key },
+        body: JSON.stringify({ model, messages:[{role:"user", content:[
+          {type:"image_url", image_url:{ url:imageData }},
+          {type:"text", text:prompt }
+        ]}], temperature:0.3, max_tokens:2000 })
+      });
+      if (!resp.ok){ const err = await resp.text(); throw new Error(`HTTP ${resp.status}: ${err.slice(0,150)}`); }
+      const data = await resp.json();
+      const raw = (data.choices?.[0]?.message?.content) || "";
+      // 从返回里提取 JSON
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      let parsed = null;
+      try { parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null; } catch(e){ parsed = null; }
+
+      if (!parsed){
+        status.innerText = "⚠️ AI 返回了内容但格式不对，尝试手动粘贴";
+        const ta = $("#q-text"); ta.value = raw; addState.text = raw; runAnalysis();
+        UI.toast("AI 返回了文字但没结构化，请手动核对","warn");
+      } else {
+        // 自动填入所有字段
+        if (parsed.text){ const ta = $("#q-text"); ta.value = parsed.text; addState.text = parsed.text; runAnalysis(); }
+        if (parsed.myAnswer){ const el = $("#my-ans"); if(el) el.value = parsed.myAnswer.trim(); }
+        if (parsed.correctAnswer){ const el = $("#ok-ans"); if(el) el.value = parsed.correctAnswer.trim(); }
+        if (parsed.module){ addState.module = parsed.module; const sel = $("#m-module"); if(sel) sel.value = parsed.module; UI.subtypeOptions(parsed.module); renderAIPreview({module:parsed.module}); }
+
+        // 把 AI 拆解粘到手动框
+        if (parsed.analysis){
+          const manualBox = $("#manual-ai-analysis");
+          if (manualBox){
+            let aiText = "";
+            if (parsed.analysis.correctReason) aiText += "✅ 正确选项的核心逻辑：\n" + parsed.analysis.correctReason + "\n\n";
+            if (parsed.analysis.wrongReason) aiText += "❌ 错误选项陷阱拆解：\n" + parsed.analysis.wrongReason + "\n\n";
+            if (parsed.analysis.skillReason) aiText += "💡 解题技巧：\n" + parsed.analysis.skillReason;
+            if (aiText) manualBox.value = aiText;
+          }
+        }
+
+        status.innerHTML = `<span style="color:var(--success);">✅ 全部填入完成！检查一下题目文字和答案是否正确，然后点保存。</span>`;
+        UI.toast("AI 看图解析完成！","success",2500);
+      }
+    } catch(e) {
+      status.innerText = "❌ 调用失败：" + (e.message||"") + "（可检查 API Key 或用下方 OCR + 手动输入替代）";
+      UI.toast("AI 看图解析失败","error");
+    } finally {
+      if (btn){ btn.disabled = false; btn.textContent = "🖼️ AI 看图一键解析（需要 API Key）"; }
+    }
   }
 
   // === OCR 图片文字识别 ===
