@@ -1213,14 +1213,15 @@ const App = (() => {
         <label style="font-size:13px;color:var(--text-dim);">API 地址（默认硅基流动）</label>
         <input id="api-endpoint-input" value="${endpoint}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin:4px 0 10px;font-size:12px;" />
         <label style="font-size:13px;color:var(--text-dim);">文字模型（拆解题目用）</label>
-        <select id="api-model-input" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin:4px 0 6px;font-size:12px;background:var(--bg-soft);color:var(--text);">
+        <select id="api-model-input" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin:4px 0 6px;font-size:12px;background:var(--bg-soft);color:var(--text);" onchange="document.getElementById('warn-pay').style.display = this.value.startsWith('💰')?'':'none'">
           ${(()=>{ const cur = model; const opts = [
             {v:"Qwen/Qwen2-7B-Instruct", l:"🆓 Qwen2-7B（完全免费，够用）"},
             {v:"THUDM/glm-4-9b-chat", l:"🆓 glm-4-9b（完全免费）"},
-            {v:"Qwen/Qwen2.5-7B-Instruct", l:"💰 Qwen2.5-7B（更准，扣费）"},
-            {v:"deepseek-ai/DeepSeek-V2", l:"💰 DeepSeek-V2（更强，扣费）"},
+            {v:"Qwen/Qwen2.5-7B-Instruct", l:"💰 Qwen2.5-7B（约 ¥0.02/次，扣费）"},
+            {v:"deepseek-ai/DeepSeek-V2", l:"💰 DeepSeek-V2（约 ¥0.05/次，扣费）"},
           ]; return opts.map(o=>`<option value="${o.v}" ${o.v===cur?'selected':''}>${o.l}</option>`).join(""); })()}
         </select>
+        <div id="warn-pay" style="display:${model.startsWith('💰')?'':'none'};background:#fff1f0;border:1px solid #ffa39e;border-radius:6px;padding:8px 12px;margin:4px 0;font-size:12px;color:#cf1322;">⚠️ 你选的是<strong>付费模型</strong>，每次调 API 会花钱！<br>建议换成上面的 🆓 免费模型，拆解行测题完全够用。</div>
         <p class="muted" style="margin:2px 0 0;font-size:11px;">💡 纯文字拆解用免费模型就行，不用花钱。图片解析才需要视觉模型。</p>
       </div>`;
     const apiFoot = `<button class="btn" data-act="ai-save-cancel">取消</button><button class="btn btn-primary" data-act="ai-save-ok">保存并调用</button>`;
