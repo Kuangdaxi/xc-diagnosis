@@ -264,487 +264,122 @@ Object.assign(window.XC, { MODULES, SUBTYPES, SUBTYPE_MAP, RULES, MODULE_FALLBAC
 /* ============================================================
  * analyzer.js
  * ============================================================ */
+
+
 const Analyzer = (() => {
-  const { MODULES, SUBTYPES, SUBTYPE_MAP, RULES, MODULE_FALLBACK } = window.XC;
-
-  function matchRule(text, rule) {
-    const hits = [];
-    for (const kw of rule.keywords) if (text.indexOf(kw) !== -1) hits.push(kw);
-    return { hits: hits.length, words: hits };
-  }
-
-  function analyze(rawText) {
-    const text = (rawText || "").replace(/\s+/g, " ").trim();
-    if (!text) return { module:null, moduleScore:0, subtype:null, subtypeScore:0, confidence:0, reasoning:"未输入题目内容，无法分析。", matched:[], pits:[], logic:null, unknown:true };
-
-    const typeScores = {}, moduleScores = {}, matchedWords = {}, matchedReasons = {};
-    for (const rule of RULES) {
-      const { hits, words } = matchRule(text, rule);
-      if (hits > 0) {
-        typeScores[rule.type] = (typeScores[rule.type]||0) + hits;
-        moduleScores[rule.module] = (moduleScores[rule.module]||0) + hits;
-        if (!matchedWords[rule.type]) matchedWords[rule.type] = [];
-        matchedWords[rule.type].push(...words);
-        matchedReasons[rule.type] = rule.reason;
-      }
-    }
-
-    let bestType = null, bestTypeScore = 0;
-    for (const t in typeScores) if (typeScores[t] > bestTypeScore) { bestTypeScore = typeScores[t]; bestType = t; }
-
-    let bestModule = null, bestModuleScore = 0;
-    for (const m in moduleScores) if (moduleScores[m] > bestModuleScore) { bestModuleScore = moduleScores[m]; bestModule = m; }
-
-    let usedFallback = false;
-    if (!bestModule) {
-      for (const m in MODULE_FALLBACK) {
-        for (const kw of MODULE_FALLBACK[m]) {
-          if (text.indexOf(kw) !== -1) {
-            moduleScores[m] = (moduleScores[m]||0) + 1;
-            if (!bestModule || moduleScores[m] > bestModuleScore) { bestModule = m; bestModuleScore = moduleScores[m]; }
-            usedFallback = true;
-          }
-        }
-      }
-    }
-
-    if (!bestModule) return { module:null, moduleScore:0, subtype:null, subtypeScore:0, confidence:0, reasoning:"未匹配到明显的行测题型特征词，请手动选择模块与题型。", matched:[], pits:[], logic:null, unknown:true };
-
-    let confidence = Math.min(95, 35 + bestModuleScore * 18);
-    if (usedFallback) confidence = Math.min(confidence, 45);
-    if (!bestType) confidence = Math.min(confidence, 55);
-
-    let pits = [], logic = null, subtypeKey = null, subtypeScore = 0, reasoning = "";
-    if (bestType) {
-      const st = SUBTYPE_MAP[bestType];
-      subtypeKey = bestType; subtypeScore = bestTypeScore;
-      pits = st.pits; logic = st.logic;
-      reasoning = `命中题型【${st.name}】（${MODULES[st.module].name}）。${matchedReasons[bestType]}。共匹配 ${bestTypeScore} 个特征词：${[...new Set(matchedWords[bestType])].join("、")}。`;
-    } else {
-      reasoning = `判断为【${MODULES[bestModule].name}】模块，但未能精确到具体题型。命中的模块特征词较少，建议手动选择题型以获得对应踩坑提示。`;
-    }
-
-    const matched = [];
-    for (const t in matchedWords) {
-      const st = SUBTYPE_MAP[t];
-      matched.push({ module:st.module, type:t, typeName:st.name, words:[...new Set(matchedWords[t])], score:typeScores[t] });
-    }
-    matched.sort((a,b)=>b.score-a.score);
-
-    return { module:bestModule, moduleScore:bestModuleScore, subtype:subtypeKey, subtypeScore, confidence:Math.round(confidence), reasoning, matched, pits, logic, unknown:false };
-  }
-
-  function getPreset(moduleKey, subtypeKey) {
-    if (subtypeKey && SUBTYPE_MAP[subtypeKey]) return { pits: SUBTYPE_MAP[subtypeKey].pits, logic: SUBTYPE_MAP[subtypeKey].logic };
-    if (moduleKey) {
-      const list = SUBTYPES.filter(s => s.module === moduleKey);
-      return { pits: list.flatMap(s => s.pits), logic: list.map(s => s.name + "：" + s.logic).join("\n") };
-    }
-    return { pits: [], logic: "" };
-  }
-
-  /* ========== AI 自动拆解引擎 ========== */
-  function extractOptions(text) {
-    const opts = {};
-    const letters = ["A","B","C","D","E","F"];
-    // 多种选项分隔符：A. A、A) A A: A. A、 A. A) 等
-    const delim = "[.、)\\s:：．、)]+";
-    for (let i = 0; i < letters.length; i++) {
-      const L = letters[i];
-      // 当前选项起始位置
-      const startRe = new RegExp(`(?:^|\\s)${L}${delim}`, "i");
-      const m = startRe.exec(text);
-      if (!m) continue;
-      const startIdx = m.index + m[0].length;
-      // 找下一个选项字母的起始位置作为结束
-      let endIdx = text.length;
-      for (let j = i + 1; j < letters.length; j++) {
-        const nextRe = new RegExp(`(?:^|\\s)${letters[j]}${delim}`, "i");
-        const nm = nextRe.exec(text.slice(startIdx));
-        if (nm && nm.index < endIdx - startIdx) {
-          endIdx = startIdx + nm.index;
-        }
-      }
-      let content = text.slice(startIdx, endIdx).trim().replace(/[,，;；]$/, "").slice(0, 100);
-      if (content.length < 1) continue;
-      opts[L] = content;
-    }
-    return opts;
-  }
-  function parseCorrectLetter(ans) {
-    if (!ans) return null;
-    const m = String(ans).toUpperCase().match(/[A-F]/);
-    return m ? m[0] : null;
-  }
-  const MODULE_TIPS = {
-    speech: { strategy:"先看题干问法，再抓关联词定位重点句，最后辨析选项差异。", shortcut:"转折词（但/然而/却）后面必是重点；递进词（更/甚至）后是程度更深的重点；因果词（因此/所以）后是结论。", traps:["把举例/数据当主旨","只看一个空就盲选","主观臆断选常识正确但原文没提的选项"] },
-    judge:  { strategy:"先明确题型，再套用对应方法，注意审题看清'属于/不属于'、'正确/错误'。", shortcut:"图形推理先看数量规律再看位置规律；定义判断逐要件比对；类比推理先看一级关系再看二级辨析；逻辑判断先找论点再看削弱/加强方向。", traps:["图形推理死盯一种规律","定义判断凭感觉整体匹配","类比推理关系方向反了","逻辑判断选了诉诸权威/无关项"] },
-    data:   { strategy:"先看问题锁定考点，再找材料对应数据，最后列式计算——别急着算，先看选项差距。", shortcut:"增长率=（现期-基期）/基期；比重变化看部分率vs整体率谁大；综合题先验易判选项。", traps:["把同比当环比","比重变化量vs比重变化率公式搞混","综合题把'正确的是'看成'错误的是'","单位换算错"] },
-    quant:  { strategy:"优先代入排除、特值法、比例法，实在不行才硬算。", shortcut:"工程问题设工作总量为最小公倍数；行程问题相遇路程=速度和×时间；排列组合A有序C无序；概率善用对立事件。", traps:["硬算不代入排除","行程追及忘算往返时间","排列组合重复/遗漏","概率漏乘条件"] },
-    common: { strategy:"绝对化表述优先排除，排除法是王道。", shortcut:"时政记关键词（根本/基本/核心）；法律看主体是否适格；经济记易混概念。", traps:["看到'所有/一定/唯一'还不怀疑","根本制度vs基本制度混淆","把朴素公平感当法律规定"] }
-  };
-
-  function detectLogicRelation(t) {
-    if (/但|然而|却|不过|可是/.test(t)) return "转折";
-    if (/不仅|而且|更|甚至|还/.test(t)) return "递进";
-    if (/因为|由于|所以|因此|导致/.test(t)) return "因果";
-    if (/不是.*而是|并非|相反/.test(t)) return "对比";
-    return "语境搭配";
-  }
-  function detectMainPoint(t) {
-    if (/但|然而|却|可见|因此|也就是说/.test(t)) return "重点在转折/总结词之后，主旨是对全文的全面概括";
-    return "对全文主旨的全面概括，不选片面选项";
-  }
-  function detectGraphic(t) { const p=/数[量]?|点|线|面|一笔画|对称|旋转|平移|翻转/.exec(t); return p?p[0]:"某种数量或位置"; }
-  function detectDataFormula(t) {
-    if (/增长率|增速|增幅/.test(t)) return "增长率=(现期-基期)/基期";
-    if (/比重|占比/.test(t)) return "比重=部分/整体";
-    if (/倍数|平均|人均/.test(t)) return "A是B几倍=A/B，平均数=总量/总份数";
-    return "根据问题对应公式";
-  }
-  function detectQuantModel(t) {
-    if (/行程|速度|出发|相遇|追及/.test(t)) return "行程：相遇=速度和×时间，追及=速度差×时间";
-    if (/工程|完成|几天|合作/.test(t)) return "工程：设总量为效率最小公倍数";
-    if (/利润|成本|售价|折扣/.test(t)) return "利润=售价-成本，利润率=利润/成本";
-    if (/概率|至少|恰好/.test(t)) return "概率善用对立事件简化";
-    return "优先尝试代入排除法";
-  }
-  function guessTrapKind(letter, content, text, analysis) {
-    if (!content) return "未提取到选项内容";
-    const c = content.toLowerCase();
-    if (analysis.module === "speech") {
-      if (/只|仅|唯一|绝对/.test(c)) return "表述绝对化，主旨选温和不选极端";
-      if (/部分|有些|片面/.test(c) || content.length < 15) return "表述片面，主旨要全面概括";
-      return "混淆概念/脱离原文";
-    }
-    if (analysis.module === "judge") {
-      return "干扰项，接近正确但细节不符或逻辑不成立";
-    }
-    if (analysis.module === "data") {
-      if (/同比|环比/.test(c)) return "同比环比混淆";
-      if (/万|亿|%|‰/.test(c)) return "单位换算错误";
-      return "计算误差或近似干扰";
-    }
-    if (analysis.module === "quant") return "模型套用错误/计算失误";
-    return "似是而非的干扰项";
-  }
-
-  // 分析正确选项为什么对（对不同模块题型生成差异化理由）
-  function whyCorrect(text, analysis, correctLetter, options) {
-    const correctContent = options[correctLetter] || "(内容未提取)";
-    const wrongOptions = Object.entries(options).filter(([L]) => L !== correctLetter);
-    const wrongContents = wrongOptions.map(([L, c]) => `${L}项"${c}"`).join("、");
-
-    if (analysis.subtype === "logic_fill") {
-      // 逻辑填空：分析关联词 + 搭配 + 感情色彩
-      let relation = detectLogicRelation(text);
-      let firstWord = ""; let secondWord = "";
-      const words = correctContent.split(/\s+/).filter(w => w.length > 0);
-      if (words.length >= 2) { firstWord = words[0]; secondWord = words[1]; }
-      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
-      reason += `📌 逻辑关系：题干中关联词暗示【${relation}】关系`;
-      if (relation === "转折") reason += `，转折后才是文段重点`;
-      else if (relation === "递进") reason += `，递进词后程度更深`;
-      else if (relation === "因果") reason += `，因果推导要严谨`;
-      reason += `。\n`;
-      if (firstWord && secondWord) {
-        reason += `📌 搭配验证："${firstWord}"能与前后文构成合理搭配`;
-        // 看看其他选项第一个词有没有近义词对比
-        const wrongFirsts = wrongOptions.map(([L,c]) => {
-          const ws = c.split(/\s+/).filter(w=>w.length>0);
-          return ws[0] || "";
-        }).filter(Boolean);
-        if (wrongFirsts.length) {
-          reason += `，而 ${wrongFirsts.join("、")} 在搭配上不如它贴切`;
-        }
-        reason += `；"${secondWord}"与"结晶"构成并列递进，逻辑连贯。\n`;
-      }
-      reason += `📌 对比排除：${wrongContents}，均存在搭配不当或逻辑不连贯的问题。`;
-      return reason;
-    }
-    if (analysis.subtype === "fragment_read") {
-      let relation = detectMainPoint(text);
-      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
-      reason += `📌 主旨定位：${relation}。\n`;
-      reason += `📌 选项契合：${correctLetter}项准确概括了全文主旨，既全面又不片面。\n`;
-      reason += `📌 排除干扰：${wrongContents}，${wrongOptions.length?"均存在片面、过度引申或脱离原文的问题":"其他选项无法完整概括主旨"}。`;
-      return reason;
-    }
-    if (analysis.subtype === "sentence_order") {
-      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
-      reason += `📌 排序依据：通过指代词（这、其、该）、关联词（然而、因此）的逻辑钩子确定邻接关系。\n`;
-      reason += `📌 验证整体：该排序通读后语义连贯、逻辑通顺，符合行文脉络。`;
-      return reason;
-    }
-    if (analysis.module === "judge" && analysis.subtype === "graphic") {
-      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
-      reason += `📌 图形规律：呈现【${detectGraphic(text)}】规律。\n`;
-      reason += `📌 选项匹配：${correctLetter}项符合该规律的延续/变化要求。`;
-      return reason;
-    }
-    if (analysis.subtype === "definition") {
-      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
-      reason += `📌 要件匹配：将定义拆解为主体、客体、条件、方式、结果等要件，${correctLetter}项全部符合。\n`;
-      reason += `📌 排除依据：其他选项至少有一个关键要件不满足。`;
-      return reason;
-    }
-    if (analysis.subtype === "analogy") {
-      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
-      reason += `📌 一级关系：题干两词存在某种逻辑关系（包含/并列/属性/功能等）。\n`;
-      reason += `📌 二级辨析：${correctLetter}项与题干关系最贴近，方向、程度、范畴均一致。`;
-      return reason;
-    }
-    if (analysis.subtype === "logic_judge") {
-      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
-      reason += `📌 论证结构：先找论点，再看论据与论点之间的论证链。\n`;
-      reason += `📌 力度判断：${correctLetter}项的削弱/加强力度最强（如断桥>否论据，搭桥>补充论据）。`;
-      return reason;
-    }
-    if (analysis.module === "data") {
-      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
-      reason += `📌 公式匹配：${detectDataFormula(text)}。\n`;
-      reason += `📌 计算验证：根据材料数据代入公式计算，结果与${correctLetter}项吻合。\n`;
-      reason += `📌 易错提醒：注意区分同比vs环比、单位换算、比重变化量vs变化率。`;
-      return reason;
-    }
-    if (analysis.module === "quant") {
-      let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
-      reason += `📌 题型识别：${detectQuantModel(text)}。\n`;
-      reason += `📌 解法选择：优先考虑代入排除/特值法/比例法，计算验证后${correctLetter}项满足题意。`;
-      return reason;
-    }
-    // 常识判断或其他
-    let reason = `✅ **正确选项 ${correctLetter}**（${correctContent}）的核心逻辑：\n`;
-    reason += `📌 考点定位：本题考查${analysis.subtype?SUBTYPE_MAP[analysis.subtype].name:mod.name}相关知识点。\n`;
-    reason += `📌 排除法：绝对化表述（都/一定/只有）多为错项，${correctLetter}项表述严谨、符合考点要求。`;
-    return reason;
-  }
-
-  function whyWrongOptions(text, analysis, correctLetter, options) {
-    if (!options[correctLetter]) {
-      return "（📌 选项格式不标准，AI 无法自动提取所有选项内容。请确认题目中 A/B/C/D 选项格式规范，或手动查看你的正解/错题笔记）";
-    }
-    const wrongLetters = Object.keys(options).filter(L => L !== correctLetter);
-    const trapKind = (L, content) => guessTrapKind(L, content, text, analysis);
-    let out = "❌ **错误选项陷阱拆解**：\n";
-    wrongLetters.forEach(L => {
-      out += `• **${L}项**「${options[L]}」— ${trapKind(L, options[L])}\n`;
-    });
-    return out;
-  }
-
-  function generateExplanation(rawText, myAnswer, correctAnswer) {
-    const text = (rawText||"").replace(/\s+/g," ").trim();
-    if (!text) return null;
-    const analysis = Analyzer.analyze(text);
-    if (analysis.unknown || !analysis.module) return null;
-    const mod = MODULES[analysis.module];
-    const sub = analysis.subtype ? SUBTYPE_MAP[analysis.subtype] : null;
-    const tips = MODULE_TIPS[analysis.module] || MODULE_TIPS.speech;
-    const options = extractOptions(text);
-    const correctLetter = parseCorrectLetter(correctAnswer);
-    const wrongLetter = parseCorrectLetter(myAnswer);
-
-    let correctReason = "";
-    if (correctLetter) {
-      correctReason = whyCorrect(text, analysis, correctLetter, options);
-    } else {
-      correctReason = "（📌 请在「正确答案」处填写字母 A/B/C/D，AI 才能给出正确选项的深度分析）";
-    }
-
-    let wrongReason = "";
-    if (correctLetter) {
-      wrongReason = whyWrongOptions(text, analysis, correctLetter, options);
-    } else {
-      wrongReason = "（📌 请先填写正确答案，AI 才能对比拆解每个错误选项的陷阱）";
-    }
-
-    let skillReason = `💡 **这道题的解题技巧**：\n`;
-    if (sub) skillReason += `📍 这是【${sub.name}】，核心方法：${sub.logic}\n`;
-    skillReason += `📋 通用策略：${tips.strategy}\n`;
-    skillReason += `⚡ 快速捷径：${tips.shortcut}\n`;
-    skillReason += `⚠️ 易踩坑：${tips.traps.slice(0,3).join("、")}`;
-
-    return {
-      module: analysis.module, subtype: analysis.subtype,
-      correctLetter, wrongLetter,
-      correctReason, wrongReason, skillReason,
-      options,
-      generatedAt: Date.now(), version: "3.0"
-    };
-  }
-
-  return { analyze, getPreset, generateExplanation, extractOptions };
+  const MODULES = [
+    {id:"speech", name:"言语理解", color:"#4f9cf9", subtypes:[
+      {id:"logic", name:"逻辑填空"},{id:"reading", name:"片段阅读"},{id:"order", name:"语句排序"},{id:"fill", name:"语句填空"},{id:"title", name:"标题添加"}
+    ]},
+    {id:"judge", name:"判断推理", color:"#f97316", subtypes:[
+      {id:"graph", name:"图形推理"},{id:"define", name:"定义判断"},{id:"analog", name:"类比推理"},{id:"logic", name:"逻辑判断"}
+    ]},
+    {id:"data", name:"资料分析", color:"#10b981", subtypes:[
+      {id:"growth", name:"增长相关"},{id:"proportion", name:"比重相关"},{id:"compare", name:"倍数与比值"},{id:"average", name:"平均数与中位数"},{id:"combo", name:"综合分析"}
+    ]},
+    {id:"quant", name:"数量关系", color:"#8b5cf6", subtypes:[
+      {id:"行程", name:"行程问题"},{id:"工程", name:"工程问题"},{id:"利润", name:"利润问题"},{id:"概率", name:"概率问题"},{id:"几何", name:"几何问题"},{id:"数列", name:"数列问题"},{id:"其他", name:"其他"}
+    ]},
+    {id:"common", name:"常识判断", color:"#ec4899", subtypes:[
+      {id:"law", name:"法律常识"},{id:"polity", name:"政治常识"},{id:"history", name:"历史文化"},{id:"science", name:"科技地理"},{id:"life", name:"生活百科"}
+    ]}
+  ];
+  const SUBTYPE_MAP = {}; MODULES.forEach(m=>m.subtypes.forEach(s=>SUBTYPE_MAP[s.id]=s));
+  return { MODULES, SUBTYPE_MAP };
 })();
-window.XC.Analyzer = Analyzer;
 
-/* ============================================================
- * store.js
- * ============================================================ */
 const Store = (() => {
-  const KEY = "xc_records_v1";
-  function load() { try { const raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : []; } catch(e){ console.warn("load fail",e); return []; } }
-  function save(arr) { try { localStorage.setItem(KEY, JSON.stringify(arr)); } catch(e){ console.error("save fail",e); throw new Error("存储失败：可能截图过大超过浏览器本地配额，请裁剪后再上传。"); } }
-  function uid() { return "q" + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
-
-  function getAll() { return load().sort((a,b)=>b.createdAt-a.createdAt); }
-  function getById(id) { return load().find(r=>r.id===id) || null; }
-  function add(record) {
-    const arr = load();
-    const item = Object.assign({ id:uid(), createdAt:Date.now(), text:"", image:null, module:null, subtype:null, analysis:null, pits:[], myAnswer:"", correctAnswer:"", aiAnalysis:null, note:"", tags:[] }, record);
-    arr.push(item); save(arr); return item;
-  }
-  function update(id, patch) {
-    const arr = load(); const idx = arr.findIndex(r=>r.id===id);
-    if (idx === -1) return null;
-    arr[idx] = Object.assign({}, arr[idx], patch, { id, createdAt: arr[idx].createdAt });
-    save(arr); return arr[idx];
-  }
-  function remove(id) { const arr = load(); const next = arr.filter(r=>r.id!==id); save(next); return arr.length !== next.length; }
-  function clearAll() { save([]); }
-
-  function stats() {
-    const arr = load(); const total = arr.length;
-    const moduleCounts = {}; for (const m in window.XC.MODULES) moduleCounts[m]=0;
-    arr.forEach(r=>{ if (r.module) moduleCounts[r.module] = (moduleCounts[r.module]||0)+1; });
-    const subtypeCounts = {};
-    arr.forEach(r=>{ if (r.subtype) subtypeCounts[r.subtype] = (subtypeCounts[r.subtype]||0)+1; });
-    const pitMap = {};
-    arr.forEach(r=>{
-      if (!r.pits || !r.pits.length) return;
-      const sub = window.XC.SUBTYPE_MAP[r.subtype] || { name:"未细分" };
-      const mod = window.XC.MODULES[r.module] || { name:"未分类" };
-      r.pits.forEach(p=>{
-        const key = r.module + "|" + (r.subtype||"") + "|" + p;
-        if (!pitMap[key]) pitMap[key] = { module:r.module, subtype:r.subtype, moduleName:mod.name, subtypeName:sub.name, pit:p, count:0 };
-        pitMap[key].count++;
-      });
-    });
-    const pitRank = Object.values(pitMap).sort((a,b)=>b.count-a.count);
-    const trend = buildTrend(arr, 14);
-    const moduleRank = Object.entries(moduleCounts).filter(([k])=>window.XC.MODULES[k]).map(([k,v])=>({ key:k, count:v, ...window.XC.MODULES[k] })).sort((a,b)=>b.count-a.count);
-    const answeredWrong = arr.filter(r=>r.myAnswer && r.correctAnswer && r.myAnswer !== r.correctAnswer).length;
-    return { total, moduleCounts, subtypeCounts, moduleRank, pitRank, trend, answeredWrong, byModuleTop: moduleRank[0] || null };
-  }
-  function buildTrend(arr, days) {
-    const out = []; const today = new Date(); today.setHours(0,0,0,0);
-    const map = {};
-    arr.forEach(r=>{ const d = new Date(r.createdAt); d.setHours(0,0,0,0); const diff = Math.round((today-d)/86400000); if (diff>=0 && diff<days) { const key = formatDate(d); map[key] = (map[key]||0)+1; } });
-    for (let i=days-1; i>=0; i--) { const d = new Date(today); d.setDate(d.getDate()-i); const key = formatDate(d); out.push({ date:key, label:key.slice(5), count: map[key]||0 }); }
-    return out;
-  }
-  function formatDate(d) { const m = String(d.getMonth()+1).padStart(2,"0"); const day = String(d.getDate()).padStart(2,"0"); return `${d.getFullYear()}-${m}-${day}`; }
-
-  return { getAll, getById, add, update, remove, clearAll, stats };
+  const KEY = "xc_mistakes_v7";
+  function getAll(){ try { return JSON.parse(localStorage.getItem(KEY)||"[]"); } catch(e){ return []; } }
+  function save(arr){ try { localStorage.setItem(KEY, JSON.stringify(arr)); } catch(e){ throw new Error("存储失败：截图可能过大"); } }
+  function list(){ return getAll(); }
+  function get(id){ return getAll().find(r=>r.id===id); }
+  function add(rec){ const arr = getAll(); rec.id = Date.now().toString(36)+Math.random().toString(36).slice(2,6); rec.createdAt = Date.now(); arr.unshift(rec); save(arr); return rec; }
+  function update(id, data){ const arr = getAll(); const i = arr.findIndex(r=>r.id===id); if(i>=0){ arr[i] = { ...arr[i], ...data }; save(arr); return arr[i]; } return null; }
+  function remove(id){ save(getAll().filter(r=>r.id!==id)); }
+  function clear(){ save([]); }
+  return { list, get, add, update, remove, clear };
 })();
-window.XC.Store = Store;
 
-/* ============================================================
- * ui.js
- * ============================================================ */
 const UI = (() => {
-  const { MODULES, SUBTYPES } = window.XC;
-  function el(html){ const t = document.createElement("template"); t.innerHTML = html.trim(); return t.content.firstElementChild; }
-  function escapeHtml(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
-  function toast(msg, type="info", ms=2200){
-    const box = document.getElementById("toast-container");
-    const t = el(`<div class="toast ${type}">${escapeHtml(msg)}</div>`);
-    box.appendChild(t);
-    setTimeout(()=>{ t.style.opacity="0"; t.style.transition="opacity .25s"; setTimeout(()=>t.remove(),250); }, ms);
+  function el(html){ const d = document.createElement("div"); d.innerHTML = html.trim(); return d.firstElementChild; }
+  function escapeHtml(s){ if(!s) return ""; const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+  function toast(msg, type="info", dur=2200){
+    const map = { error:"#ff4d4f", warn:"#faad14", info:"#10b981" };
+    const t = el(`<div style="position:fixed;top:60px;left:50%;transform:translateX(-50%);z-index:9999;padding:10px 20px;border-radius:8px;background:${map[type]||map.info};color:#fff;font-size:14px;box-shadow:0 4px 16px rgba(0,0,0,0.2);">${escapeHtml(msg)}</div>`);
+    document.body.appendChild(t); setTimeout(()=>{ t.style.opacity="0"; setTimeout(()=>t.remove(),200); }, dur);
   }
-  function modal({ title="", bodyHTML="", footerHTML="", onMount } = {}){
-    document.getElementById("modal-root").innerHTML = "";
-    const root = el(`<div class="modal-overlay"><div class="modal" role="dialog" aria-modal="true"><div class="modal-head"><h3>${escapeHtml(title)}</h3><button class="btn btn-ghost btn-sm" data-act="close">✕</button></div><div class="modal-body">${bodyHTML}</div>${footerHTML?`<div class="modal-foot">${footerHTML}</div>`:""}</div></div>`);
-    document.getElementById("modal-root").appendChild(root);
-    const close = ()=>{ root.remove(); };
-    root.addEventListener("click", e=>{ if (e.target===root || e.target.closest('[data-act="close"]')) close(); });
-    document.addEventListener("keydown", function esc(e){ if (e.key==="Escape"){ close(); document.removeEventListener("keydown", esc); } });
-    if (onMount) onMount(root, close);
-    return { close, root };
-  }
-  function confirmDialog(msg, { okText="确定", cancelText="取消", danger=false } = {}){
-    return new Promise(resolve=>{
-      modal({
-        title:"请确认",
-        bodyHTML:`<p style="font-size:14px;line-height:1.7;">${escapeHtml(msg)}</p>`,
-        footerHTML:`<button class="btn" data-act="cancel">${escapeHtml(cancelText)}</button><button class="btn ${danger?"btn-danger":"btn-primary"}" data-act="ok">${escapeHtml(okText)}</button>`,
-        onMount(root, close){ root.addEventListener("click", e=>{ if (e.target.closest('[data-act="ok"]')){ close(); resolve(true); } else if (e.target.closest('[data-act="cancel"]')){ close(); resolve(false); } }); }
-      });
+  function modal({ title="", bodyHTML="", footerHTML="", onMount=null }){
+    const closeBtn = `<button class="btn" data-close-modal style="padding:8px 16px;border-radius:6px;background:var(--bg-soft);color:var(--text);border:none;cursor:pointer;">关闭</button>`;
+    const overlay = el(`<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9998;display:flex;align-items:center;justify-content:center;padding:20px;"><div style="background:var(--bg);border-radius:12px;max-width:520px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3);"><div style="padding:16px 20px;border-bottom:1px solid var(--border);font-weight:600;">${escapeHtml(title)}</div><div style="padding:20px;">${bodyHTML}</div><div style="padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;">${footerHTML||closeBtn}</div></div></div>`);
+    document.body.appendChild(overlay);
+    const close = ()=> overlay.remove();
+    if (onMount) onMount(overlay, close);
+    overlay.addEventListener("click", e=>{
+      if (e.target === overlay) close();
+      if (e.target.matches("[data-close-modal]")) close();
     });
+    return { close, overlay };
   }
-  function moduleTag(key, withName=true){ if (!key || !MODULES[key]) return `<span class="tag tag-muted">未分类</span>`; const m = MODULES[key]; return `<span class="tag tag-${m.key}">${m.icon} ${withName?m.name:m.short}</span>`; }
-  function subtypeTag(subtypeKey){ if (!subtypeKey) return ""; const st = window.XC.SUBTYPE_MAP[subtypeKey]; if (!st) return ""; return `<span class="tag tag-muted">${escapeHtml(st.name)}</span>`; }
-  function moduleOptions(selected){ return `<option value="">— 选择模块 —</option>` + Object.values(MODULES).map(m=>`<option value="${m.key}" ${selected===m.key?"selected":""}>${m.icon} ${m.name}</option>`).join(""); }
-  function subtypeOptions(moduleKey, selected){ if (!moduleKey) return `<option value="">— 先选模块 —</option>`; const list = SUBTYPES.filter(s=>s.module===moduleKey); if (!list.length) return `<option value="">该模块无预设题型</option>`; return `<option value="">— 选择题型（可选）—</option>` + list.map(s=>`<option value="${s.type}" ${selected===s.type?"selected":""}>${escapeHtml(s.name)}</option>`).join(""); }
-  function fileToDataURL(file, maxDim=1280, quality=0.82){
-    return new Promise((resolve,reject)=>{
-      const reader = new FileReader();
-      reader.onerror = ()=>reject(new Error("读取文件失败"));
-      reader.onload = ()=>{
-        const dataURL = reader.result;
-        const img = new Image();
-        img.onload = ()=>{
-          let { width:w, height:h } = img;
-          if (w > maxDim || h > maxDim){ const scale = maxDim / Math.max(w,h); w = Math.round(w*scale); h = Math.round(h*scale); }
-          const cv = document.createElement("canvas"); cv.width=w; cv.height=h;
-          const ctx = cv.getContext("2d"); ctx.drawImage(img,0,0,w,h);
-          resolve(cv.toDataURL("image/jpeg", quality));
-        };
-        img.onerror = ()=>resolve(dataURL);
-        img.src = dataURL;
-      };
-      reader.readAsDataURL(file);
-    });
+  function moduleTag(id){ const m = Analyzer.MODULES.find(m=>m.id===id); return m ? `<span style="padding:2px 8px;border-radius:10px;font-size:11px;background:${m.color}20;color:${m.color};">${m.name}</span>` : ""; }
+  function subtypeTag(id){ const s = Analyzer.SUBTYPE_MAP[id]; return s ? `<span style="padding:2px 8px;border-radius:10px;font-size:11px;background:var(--bg-soft);color:var(--text-dim);">${s.name}</span>` : ""; }
+  function moduleOptions(selected){ return `<option value="">请选择</option>` + Analyzer.MODULES.map(m=>`<option value="${m.id}" ${selected===m.id?"selected":""}>${m.name}</option>`).join(""); }
+  function subtypeOptions(moduleId, selected){
+    const m = Analyzer.MODULES.find(m=>m.id===moduleId);
+    if (!m) return `<option value="">先选模块</option>`;
+    return `<option value="">请选择</option>` + m.subtypes.map(s=>`<option value="${s.id}" ${selected===s.id?"selected":""}>${s.name}</option>`).join("");
   }
-  function timeAgo(ts){ const diff = Date.now()-ts; const m = Math.floor(diff/60000); if (m<1) return "刚刚"; if (m<60) return m+" 分钟前"; const h = Math.floor(m/60); if (h<24) return h+" 小时前"; const d = Math.floor(h/24); if (d<30) return d+" 天前"; const date = new Date(ts); return `${date.getMonth()+1}/${date.getDate()}`; }
-  return { el, escapeHtml, toast, modal, confirmDialog, moduleTag, subtypeTag, moduleOptions, subtypeOptions, fileToDataURL, timeAgo };
+  function fileToDataURL(file){ return new Promise((res,rej)=>{
+    if (!file.type.startsWith("image/")) return rej(new Error("请上传图片"));
+    const reader = new FileReader(); reader.onload = ()=>{
+      const img = new Image(); img.onload = ()=>{
+        const maxW=1200, maxH=1600; let w=img.naturalWidth, h=img.naturalHeight;
+        if (w>maxW||h>maxH){ const r=Math.min(maxW/w,maxH/h); w=Math.round(w*r); h=Math.round(h*r); }
+        const c=document.createElement("canvas"); c.width=w; c.height=h; const ctx=c.getContext("2d"); ctx.drawImage(img,0,0,w,h); res(c.toDataURL("image/jpeg",0.85));
+      }; img.onerror = ()=>rej(new Error("图片加载失败")); img.src = reader.result;
+    }; reader.onerror = ()=>rej(new Error("读取失败")); reader.readAsDataURL(file);
+  }); }
+  function timeAgo(ts){
+    if (!ts) return ""; const diff = Date.now() - ts;
+    if (diff < 60000) return "刚刚"; if (diff < 3600000) return Math.floor(diff/60000)+"分钟前";
+    if (diff < 86400000) return Math.floor(diff/3600000)+"小时前"; if (diff < 604800000) return Math.floor(diff/86400000)+"天前";
+    return new Date(ts).toLocaleDateString();
+  }
+  return { el, escapeHtml, toast, modal, moduleTag, subtypeTag, moduleOptions, subtypeOptions, fileToDataURL, timeAgo };
 })();
-window.XC.UI = UI;
 
-/* ============================================================
- * app.js
- * ============================================================ */
+// polyfill
+(function(){
+  if (!Element.prototype.matches) Element.prototype.matches = Element.prototype.msMatchesSelector || Element.prototype.webkitMatchesSelector;
+  if (!Element.prototype.closest) Element.prototype.closest = function(s){ if(!document.documentElement.contains(this)) return null; if(this.matches(s)) return this; if(this.parentElement) return this.parentElement.closest(s); return null; };
+})();
+
 const App = (() => {
-  const { MODULES, SUBTYPES, SUBTYPE_MAP, Analyzer, Store, UI } = window.XC;
+  const MODULES = Analyzer.MODULES, SUBTYPE_MAP = Analyzer.SUBTYPE_MAP;
   const $ = (s, r=document) => r.querySelector(s);
-  const $$ = (s, r=document) => [...r.querySelectorAll(s)];
-
-  let addState = resetAddState();
-  function resetAddState(){ return { text:"", image:null, applied:false, module:null, subtype:null, manualAnalysis:"" }; }
+  let addState = { text:"", image:null, module:null, subtype:null };
 
   const routes = { "#/add":renderAdd, "#/list":renderList, "#/stats":renderStats };
   function currentRoute(){ const h = location.hash || "#/add"; return routes[h] ? h : "#/add"; }
-  function render(){ const app = $("#app"); const route = currentRoute(); app.innerHTML = shell(route); routes[route](); }
-  function navigate(hash){ location.hash = hash; }
+  function render(){ const route = currentRoute(); $("#page").innerHTML = shell(route); routes[route](); }
   function shell(route){
     const navItem = (h,label)=>`<a href="${h}" class="${route===h?"active":""}" data-link="${h}">${label}</a>`;
     const count = Store.getAll().length;
-    return `<header class="topbar"><div class="brand"><span class="logo">行</span><span>行测错题诊断</span></div><nav class="nav">${navItem("#/add","录入错题")}${navItem("#/list","错题本")}${navItem("#/stats","分析报告")}</nav><div class="spacer"></div><div class="stat-mini">已记录 ${count} 题</div></header><main class="main" id="page"></main><nav class="tabbar"><a href="#/add" class="${route==="#/add"?"active":""}" data-link="#/add"><span class="tb-ico">✎</span>录入</a><a href="#/list" class="${route==="#/list"?"active":""}" data-link="#/list"><span class="tb-ico">▤</span>错题本</a><a href="#/stats" class="${route==="#/stats"?"active":""}" data-link="#/stats"><span class="tb-ico">📊</span>分析</a></nav>`;
+    return `<header class="topbar"><div class="brand"><span class="logo">行</span><span>行测错题本</span></div><nav class="nav">${navItem("#/add","录入错题")}${navItem("#/list","错题本")}${navItem("#/stats","分析报告")}</nav><div class="spacer"></div><div class="stat-mini">已记录 ${count} 题</div></header><main class="main" id="page"></main><nav class="tabbar"><a href="#/add" class="${route==="#/add"?"active":""}" data-link="#/add"><span class="tb-ico">✎</span>录入</a><a href="#/list" class="${route==="#/list"?"active":""}" data-link="#/list"><span class="tb-ico">▤</span>错题本</a><a href="#/stats" class="${route==="#/stats"?"active":""}" data-link="#/stats"><span class="tb-ico">📊</span>分析</a></nav>`;
   }
 
-  let analyzeTimer = null;
-
   function renderAdd(){
-    const page = $("#page");
-    page.innerHTML = `
-      <div class="page-head"><h1>录入错题</h1><p>粘贴题目文字或上传截图，选择所属模块与题型，填写答题信息。</p></div>
+    $("#page").innerHTML = `
+      <div class="page-head"><h1>录入错题</h1><p>粘贴题目文字或上传截图，选模块题型，填写答题信息和 AI 解析。</p></div>
       <div class="grid grid-2">
         <div>
           <div class="card">
             <div class="card-title"><span class="dot"></span>题目内容</div>
-            <div class="form-row">
-              <label>题目文字</label>
-              <textarea id="q-text" placeholder="把题目（含题干和选项）粘贴到这里…&#10;例如：依次填入划横线部分最恰当的一组词是…">${UI.escapeHtml(addState.text)}</textarea>
-            </div>
+            <div class="form-row"><label>题目文字</label><textarea id="q-text" placeholder="把题目（含题干和选项）粘贴到这里…">${UI.escapeHtml(addState.text)}</textarea></div>
           </div>
           <div class="card">
             <div class="card-title"><span class="dot"></span>错题截图（可选）</div>
-            <label class="dropzone" id="dz">
-              <div class="dz-icon">🖼️</div>
-              <div>点击上传或拖入图片</div>
-              <div class="hint">支持 PNG / JPG，会自动压缩存储到本地</div>
-              <input type="file" id="q-file" accept="image/*" />
-            </label>
+            <label class="dropzone" id="dz"><div class="dz-icon">🖼️</div><div>点击上传或拖入图片</div><div class="hint">PNG / JPG，自动压缩</div><input type="file" id="q-file" accept="image/*" /></label>
             <div id="img-preview"></div>
           </div>
         </div>
@@ -755,550 +390,52 @@ const App = (() => {
               <div class="form-row" style="margin:0;"><label>所属模块</label><select id="m-module">${UI.moduleOptions(addState.module)}</select></div>
               <div class="form-row" style="margin:0;"><label>具体题型</label><select id="m-subtype">${UI.subtypeOptions(addState.module, addState.subtype)}</select></div>
             </div>
-            <div class="section-label">常见踩坑（保存时记录你勾选的项）</div>
-            <div id="pits-box"></div>
           </div>
           <div class="card">
             <div class="card-title"><span class="dot"></span>答题信息</div>
             <div class="form-row"><label>我的错误答案</label><input id="my-ans" type="text" placeholder="例如：B" /></div>
             <div class="form-row"><label>正确答案</label><input id="ok-ans" type="text" placeholder="例如：D" /></div>
             <div class="form-row"><label>我的错误原因（自己写）</label><textarea id="note" placeholder="你为什么做错了？哪一步没考虑到？…"></textarea></div>
-            <div id="ai-preview" style="display:none;margin-top:14px;"></div>
-            <button class="btn btn-primary" data-act="save" style="width:100%;margin-top:10px;">保存到错题本</button>
+          </div>
+          <div class="card">
+            <div class="card-title"><span class="dot" style="background:#667eea;"></span>AI 深度解析（粘贴从 AI 获取的）</div>
+            <div class="form-row"><label>正确选项为什么对 + 错误选项为什么错 + 解题技巧</label><textarea id="ai-analysis" style="min-height:140px;" placeholder="把 AI 给你的深度解析粘到这里：&#10;✅ 正确选项 A 的核心逻辑：...&#10;❌ 错误选项陷阱拆解：...&#10;💡 解题技巧：..."></textarea></div>
+            <div style="display:flex;gap:8px;margin-top:6px;">
+              <button class="btn" data-act="copy-for-ai" style="flex:1;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;padding:10px;">📋 复制题目给 AI 助手</button>
+            </div>
+            <div style="font-size:12px;color:var(--text-dim);margin:6px 0 0;">💡 复制后粘到这个对话框或其他 AI 里，拿到解析再粘回来</div>
+            <button class="btn btn-primary" data-act="save" style="width:100%;margin-top:12px;">保存到错题本</button>
           </div>
         </div>
       </div>`;
-
-    if (addState.image) renderImgPreview();
-
     const ta = $("#q-text");
     ta.addEventListener("input", ()=>{ addState.text = ta.value; });
-    const fileInput = $("#q-file"); const dz = $("#dz");
+    const fileInput = $("#q-file"), dz = $("#dz");
     fileInput.addEventListener("change", ()=>handleFile(fileInput.files[0]));
     dz.addEventListener("dragover", e=>{ e.preventDefault(); dz.classList.add("drag"); });
     dz.addEventListener("dragleave", ()=>dz.classList.remove("drag"));
-    dz.addEventListener("drop", e=>{ e.preventDefault(); dz.classList.remove("drag"); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
-    $("#m-module").addEventListener("change", e=>{ addState.module = e.target.value || null; addState.subtype=null; addState.applied=true; $("#m-subtype").innerHTML = UI.subtypeOptions(addState.module, null); refreshPits(); });
-    $("#m-subtype").addEventListener("change", e=>{ addState.subtype = e.target.value || null; addState.applied=true; refreshPits(); });
-    // 填完正确答案就显示 AI 拆解区域
-    const ansTimer = { t:null };
-    const triggerAI = () => {
-      const ok = ($("#ok-ans")?.value||"").trim();
-      const box = $("#ai-preview");
-      if (!ok) { box.style.display="none"; box.innerHTML=""; return; }
-      box.innerHTML = renderAIPreview({});
-      box.style.display = "";
-    };
-    const ansBoxes = ["my-ans","ok-ans"];
-    ansBoxes.forEach(id=>{
-      const el = $("#"+id);
-      if (el) el.addEventListener("input", ()=>{ clearTimeout(ansTimer.t); ansTimer.t = setTimeout(triggerAI, 400); });
-    });
-    document.addEventListener("click", e=>{
-      if (e.target.closest('[data-act="save"]')) saveRecord();
-      if (e.target.closest('[data-act="remove-img"]')){ addState.image=null; renderImgPreview(); }
-      if (e.target.closest('[data-act="call-ai"]')) callOnlineAI();
-      if (e.target.closest('[data-act="reset-api"]')){
-        localStorage.removeItem("xc_api_key"); localStorage.removeItem("xc_api_model"); localStorage.removeItem("xc_api_endpoint");
-        UI.toast("已清除 API Key，请重新设置","success",2000);
-        callOnlineAI();
-      }
-      if (e.target.closest('[data-act="copy-for-ai"]')) copyForAI();
-      if (e.target.closest('[data-act="ai-save-ok"]')){
-        const k = $("#api-key-input")?.value?.trim();
-        const ep = $("#api-endpoint-input")?.value?.trim();
-        const m = $("#api-model-input")?.value?.trim();
-        if (!k){ UI.toast("请填写 API Key","warn"); return; }
-        localStorage.setItem("xc_api_key", k);
-        if (ep) localStorage.setItem("xc_api_endpoint", ep);
-        if (m) localStorage.setItem("xc_api_model", m);
-        document.querySelector(".modal-overlay")?.remove();
-        UI.toast("API Key 已保存，开始调用联网 AI…","success"); doCallOnlineAI();
-      }
-      if (e.target.closest('[data-act="ai-save-cancel"]')){ document.querySelector(".modal-overlay")?.remove(); }
-      if (e.target.closest('[data-act="ocr-extract"]')) runOCR();
-      if (e.target.closest('[data-act="crop-img"]')) openCropModal();
-      if (e.target.closest('[data-act="vision-ai"]')) runVisionAI();
-      if (e.target.closest('[data-act="vision-settings"]')){
-        localStorage.removeItem("xc_api_key"); localStorage.removeItem("xc_api_vision_model");
-        UI.toast("已清除，下次点 AI 解析会重新弹设置框","success",2000);
-      }
-      if (e.target.closest('[data-act="vision-detect"]')){
-        const k = $("#vision-key")?.value?.trim();
-        if (!k){ UI.toast("请先粘贴 API Key","warn"); return; }
-        const btn = e.target.closest('[data-act="vision-detect"]'); btn.disabled = true; btn.textContent = "⏳ 正在检测…";
-        fetch("https://api.siliconflow.cn/v1/models", { headers: { Authorization: "Bearer "+k } })
-          .then(r=>{ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
-          .then(d=>{
-            const all = d.data || [];
-            const vl = all.filter(m=>{ const n = m.id.toLowerCase(); return n.includes("vl") || n.includes("vision") || n.includes("omni") || n.includes("glm-4v") || n.includes("deepseek-vl") || n.includes("qwen3.5"); });
-            const sel = $("#vision-model"); const container = $("#vision-models-container");
-            if (!vl.length){ UI.toast("没找到视觉模型，检查 Key 是否正确","error"); container.style.display = "none"; }
-            else { sel.innerHTML = vl.map(m=>`<option value="${m.id}">${m.id}</option>`).join(""); container.style.display = "block"; UI.toast(`找到 ${vl.length} 个视觉模型，请选择一个`,"success"); }
-          })
-          .catch(err=>{ UI.toast("检测失败："+err.message,"error"); })
-          .finally(()=>{ btn.disabled = false; btn.textContent = "🔍 自动检测我账号可用的视觉模型"; });
-      }
-      if (e.target.closest('[data-act="vision-save"]')){
-        const k = $("#vision-key")?.value?.trim();
-        const m = $("#vision-model")?.value?.trim();
-        if (!k){ UI.toast("请填写 API Key","warn"); return; }
-        localStorage.setItem("xc_api_key", k);
-        if (m) localStorage.setItem("xc_api_vision_model", m);
-        document.querySelector(".modal-overlay")?.remove();
-        UI.toast("API Key 已保存，开始 AI 看图解析…","success"); runVisionAI();
-      }
-      if (e.target.closest('[data-act="vision-cancel"]')){ document.querySelector(".modal-overlay")?.remove(); }
-    });
+    dz.addEventListener("drop", e=>{ e.preventDefault(); dz.classList.remove("drag"); if(e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
+    $("#m-module").addEventListener("change", e=>{ addState.module = e.target.value||null; addState.subtype=null; $("#m-subtype").innerHTML = UI.subtypeOptions(addState.module, null); });
+    $("#m-subtype").addEventListener("change", e=>{ addState.subtype = e.target.value||null; });
+    if (addState.image) renderImgPreview();
   }
 
   function handleFile(file){
     if (!file) return;
-    if (!file.type.startsWith("image/")){ UI.toast("请上传图片文件","error"); return; }
-    UI.fileToDataURL(file).then(dataURL=>{ addState.image=dataURL; renderImgPreview(); UI.toast("截图已加载","success",1800); }).catch(err=>UI.toast(err.message||"上传失败","error"));
+    UI.fileToDataURL(file).then(d=>{ addState.image=d; renderImgPreview(); UI.toast("截图已加载","success",1500); }).catch(err=>UI.toast(err.message||"上传失败","error"));
   }
   function renderImgPreview(){
     const box = $("#img-preview"); if (!box) return;
     if (!addState.image){ box.innerHTML=""; return; }
-    box.innerHTML = `<div class="img-wrap"><img class="preview-img" src="${addState.image}" alt="错题截图" /><button class="rm" data-act="remove-img" title="移除">✕</button></div>
-      <div style="margin-top:8px;display:flex;gap:8px;">
-        <button class="btn btn-sm" data-act="crop-img" style="background:var(--primary);color:#fff;">✂️ 裁剪图片</button>
-      </div>`;
-  }
-
-  // === 图片裁剪 ===
-  let cropState = { active:false, img:null, startX:0, startY:0, curX:0, curY:0 };
-  function openCropModal(){
-    if (!addState.image) return;
-    const body = `
-      <div style="text-align:center;color:var(--text-dim);font-size:12px;margin-bottom:10px;">拖动图片上的选框来裁剪（只保留有题目的部分）</div>
-      <div style="position:relative;display:inline-block;max-width:100%;border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#000;">
-        <img id="crop-img" src="${addState.image}" style="max-width:100%;display:block;user-select:none;" />
-        <div id="crop-box" style="position:absolute;border:2px solid var(--primary);background:rgba(79,156,249,0.15);cursor:move;min-width:20px;min-height:20px;">
-          <div style="position:absolute;right:-6px;bottom:-6px;width:12px;height:12px;background:var(--primary);border-radius:50%;cursor:nwse-resize;" id="crop-handle"></div>
-        </div>
-      </div>`;
-    UI.modal({ title:"✂️ 裁剪错题图片", bodyHTML: body, footerHTML: `<button class="btn" data-act="crop-cancel">取消</button><button class="btn btn-primary" data-act="crop-confirm">确认裁剪</button>`,
-      onMount(root, close){
-        const img = $("#crop-img", root); const box = $("#crop-box", root); const handle = $("#crop-handle", root);
-        img.onload = ()=>{
-          // 默认选框：中心区域 80%
-          const w = img.offsetWidth, h = img.offsetHeight;
-          const bw = w * 0.8, bh = h * 0.8;
-          box.style.left = ((w-bw)/2)+"px"; box.style.top = ((h-bh)/2)+"px";
-          box.style.width = bw+"px"; box.style.height = bh+"px";
-        };
-        box.addEventListener("mousedown", e=>{ e.stopPropagation(); startDrag(e, "move"); });
-        box.addEventListener("touchstart", e=>{ e.stopPropagation(); startDrag(e.touches[0], "move"); }, {passive:true});
-        handle.addEventListener("mousedown", e=>{ e.stopPropagation(); startDrag(e, "resize"); });
-        handle.addEventListener("touchstart", e=>{ e.stopPropagation(); startDrag(e.touches[0], "resize"); }, {passive:true});
-
-        function startDrag(e, mode){
-          cropState.active = true; cropState.mode = mode;
-          cropState.startX = (e.clientX||e.touches?.[0]?.clientX) - box.offsetLeft;
-          cropState.startY = (e.clientY||e.touches?.[0]?.clientY) - box.offsetTop;
-          cropState.startW = box.offsetWidth; cropState.startH = box.offsetHeight;
-        }
-        function onMove(e){
-          if (!cropState.active) return;
-          const cx = e.clientX || e.touches?.[0]?.clientX;
-          const cy = e.clientY || e.touches?.[0]?.clientY;
-          const imgRect = img.getBoundingClientRect();
-          if (cropState.mode === "move"){
-            let nx = cx - cropState.startX, ny = cy - cropState.startY;
-            nx = Math.max(0, Math.min(nx, imgRect.width - box.offsetWidth));
-            ny = Math.max(0, Math.min(ny, imgRect.height - box.offsetHeight));
-            box.style.left = nx + "px"; box.style.top = ny + "px";
-          } else {
-            let nw = cropState.startW + (cx - (box.offsetLeft + cropState.startW)), nh = cropState.startH + (cy - (box.offsetTop + cropState.startH));
-            nw = Math.max(20, Math.min(nw, imgRect.width - box.offsetLeft));
-            nh = Math.max(20, Math.min(nh, imgRect.height - box.offsetTop));
-            box.style.width = nw + "px"; box.style.height = nh + "px";
-          }
-        }
-        function onUp(){ cropState.active = false; }
-        root.addEventListener("mousemove", onMove); root.addEventListener("mouseup", onUp);
-        root.addEventListener("touchmove", onMove, {passive:true}); root.addEventListener("touchend", onUp);
-
-        root.addEventListener("click", async e=>{
-          if (e.target.closest('[data-act="crop-cancel"]')){ close(); }
-          if (e.target.closest('[data-act="crop-confirm"]')){
-            // 实际裁剪 canvas
-            const canvas = document.createElement("canvas");
-            const ctx = canvas.getContext("2d");
-            const imgEl = new Image(); imgEl.crossOrigin = "anonymous";
-            imgEl.onload = ()=>{
-              const scaleX = imgEl.naturalWidth / img.offsetWidth;
-              const scaleY = imgEl.naturalHeight / img.offsetHeight;
-              const sx = Math.round(box.offsetLeft * scaleX);
-              const sy = Math.round(box.offsetTop * scaleY);
-              const sw = Math.round(box.offsetWidth * scaleX);
-              const sh = Math.round(box.offsetHeight * scaleY);
-              canvas.width = sw; canvas.height = sh;
-              ctx.drawImage(imgEl, sx, sy, sw, sh, 0, 0, sw, sh);
-              addState.image = canvas.toDataURL("image/jpeg", 0.85);
-              renderImgPreview();
-              close(); UI.toast("裁剪完成 ✂️","success");
-            };
-            imgEl.onerror = ()=>{ close(); UI.toast("裁剪失败","error"); };
-            imgEl.src = addState.image;
-          }
-        });
-      }
-    });
-  }
-
-  // === AI 看图一键解析 ===
-  async function runVisionAI(){
-    if (!addState.image){ UI.toast("请先上传图片","warn"); return; }
-    const key = localStorage.getItem("xc_api_key");
-    if (!key){ UI.modal({ title:"🔑 设置 API Key", bodyHTML:`
-      <div style="padding:8px 0;">
-        <p style="margin:0 0 10px;font-size:14px;">AI 看图解析需要调用视觉模型 API。</p>
-        <p class="muted" style="margin:0 0 12px;font-size:12px;">最简单的方式：注册 <a href="https://cloud.siliconflow.cn/" target="_blank" style="color:var(--primary);">硅基流动</a>（免费送额度），创建 API Key 粘贴到下方。</p>
-        <label style="font-size:13px;color:var(--text-dim);">API Key</label>
-        <input id="vision-key" placeholder="sk-xxxxxx" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin:4px 0 6px;" />
-        <button class="btn" data-act="vision-detect" style="width:100%;margin:4px 0 8px;font-size:12px;">🔍 自动检测我账号可用的视觉模型</button>
-        <div id="vision-models-container" style="display:none;">
-          <label style="font-size:13px;color:var(--text-dim);">选择视觉模型</label>
-          <select id="vision-model" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin:4px 0 10px;font-size:12px;background:var(--bg-soft);color:var(--text);"></select>
-        </div>
-        <p class="muted" style="margin:4px 0 0;font-size:11px;">💡 粘贴 Key 后点"自动检测"，工具会列出你账号实际能用的视觉模型，选一个即可。</p>
-      </div>`, footerHTML:`<button class="btn" data-act="vision-cancel">取消</button><button class="btn btn-primary" data-act="vision-save">保存并解析</button>` }); return; }
-    const endpoint = localStorage.getItem("xc_api_endpoint") || "https://api.siliconflow.cn/v1/chat/completions";
-    const model = localStorage.getItem("xc_api_vision_model") || "Qwen/Qwen2.5-VL-7B-Instruct";
-
-    const status = $("#ocr-status");
-    const btn = document.querySelector('[data-act="vision-ai"]');
-    if (btn) btn.disabled = true; btn.textContent = "⏳ AI 正在看图解析…";
-    status.innerText = "发送图片给视觉模型…";
-
-    // 压缩图片到 base64（更狠的压缩，确保 < 1MB）
-    let imageData = addState.image;
-    if (imageData) {
-      const img = new Image(); img.crossOrigin = "anonymous";
-      await new Promise((res,rej)=>{ img.onload = res; img.onerror = rej; img.src = imageData; });
-      const maxW = 1024, maxH = 1024; let w = img.naturalWidth, h = img.naturalHeight;
-      if (w > maxW || h > maxH){ const r = Math.min(maxW/w, maxH/h); w = Math.round(w*r); h = Math.round(h*r); }
-      const canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h;
-      const ctx = canvas.getContext("2d"); ctx.drawImage(img, 0, 0, w, h);
-      imageData = canvas.toDataURL("image/jpeg", 0.75);
-      status.innerText = `图片已压缩至 ${(imageData.length/1024).toFixed(0)}KB，发送给 ${model}…`;
-    }
-
-    const prompt = `你是一名专业的公务员考试行测讲师，擅长深度拆解题目逻辑和错因。请识别这张图片中的行测题目，然后进行深度解析。
-
-⚠️ 必须严格按以下 JSON 格式返回，不要返回 JSON 以外的任何内容！analysis 对象是必须的，不能为空！
-{
-  "text": "完整的题目文字，包含题干和所有选项，不要遗漏",
-  "module": "只能是以下之一：speech/judge/data/quant/common",
-  "myAnswer": "图片中标注的你选的错误答案字母；如果没标注就留空字符串",
-  "correctAnswer": "正确答案字母，如果图片没标就根据题目推断",
-  "analysis": {
-    "correctReason": "正确选项为什么对的详细分析，必须紧扣考点、逻辑关系、每个选项的对比，不能只说'最契合'",
-    "wrongReason": "逐个分析每个错误选项为什么错，必须指出每个选项的具体陷阱类型（如偷换概念/逻辑反转/无中生有/绝对化表述等），不能只说'不符合逻辑'",
-    "skillReason": "这类题的通用解题技巧和避坑要点，给出具体可操作的步骤"
-  }
-}`;
-
-    try {
-      status.innerText = `调用 API 中（图片 ${(imageData.length/1024).toFixed(0)}KB）…`;
-      const resp = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type":"application/json", "Authorization":"Bearer "+key },
-        body: JSON.stringify({ model, messages:[
-          {role:"system", content:"你是一名专业的公务员考试行测讲师，擅长深度拆解题目逻辑和错因。必须严格按要求返回 JSON，analysis 对象是必须的，不能省略！"},
-          {role:"user", content:[
-            {type:"image_url", image_url:{ url:imageData, detail:"high" }},
-            {type:"text", text:prompt }
-          ]}], temperature:0.3, max_tokens:3500 })
-      });
-      const respText = await resp.text();
-      if (!resp.ok){
-        let errMsg = respText.slice(0,300);
-        try { const j = JSON.parse(respText); if(j.error) errMsg = j.error.message || j.error; } catch(e){}
-        // 友好错误提示
-        if (resp.status === 402) throw new Error(`HTTP 402：API 余额不足，请去 硅基流动控制台 充值。新用户送的 1400 万 tokens 可能用完了。`);
-        if (resp.status === 401) throw new Error(`HTTP 401：API Key 无效或过期，点 ⚙️ 修改Key/模型 重新设置。`);
-        if (resp.status === 403) throw new Error(`HTTP 403：该模型你的账号没权限，点 ⚙️ 修改Key/模型 重新检测可用模型。`);
-        throw new Error(`HTTP ${resp.status}：${errMsg}`);
-      }
-      let data; try { data = JSON.parse(respText); } catch(e){ throw new Error("API 返回格式异常"); }
-      const raw = (data.choices?.[0]?.message?.content) || "";
-      // 从返回里提取 JSON
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
-      let parsed = null;
-      try { parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null; } catch(e){ parsed = null; }
-
-      if (!parsed){
-        // AI 返回了文字但不是 JSON，直接填入题目框 + 手动 AI 框
-        status.innerText = "⚠️ AI 返回了文字但格式不对，直接填入题目框";
-        const ta = $("#q-text"); ta.value = raw; addState.text = raw; runAnalysis();
-        UI.toast("AI 返回了内容但没结构化，请手动核对","warn");
-      } else {
-        // 自动填入所有字段
-        if (parsed.text){ const ta = $("#q-text"); ta.value = parsed.text; addState.text = parsed.text; runAnalysis(); }
-        if (parsed.myAnswer){ const el = $("#my-ans"); if(el) el.value = parsed.myAnswer.trim(); }
-        if (parsed.correctAnswer){ const el = $("#ok-ans"); if(el) el.value = parsed.correctAnswer.trim(); }
-        if (parsed.module){ addState.module = parsed.module; const sel = $("#m-module"); if(sel) sel.value = parsed.module; UI.subtypeOptions(parsed.module); renderAIPreview({module:parsed.module}); }
-
-        // 把 AI 拆解粘到手动框
-        const manualBox = $("#manual-ai-analysis");
-        let aiText = "";
-        if (parsed.analysis && typeof parsed.analysis === "object"){
-          if (parsed.analysis.correctReason) aiText += "✅ 正确选项的核心逻辑：\n" + parsed.analysis.correctReason + "\n\n";
-          if (parsed.analysis.wrongReason) aiText += "❌ 错误选项陷阱拆解：\n" + parsed.analysis.wrongReason + "\n\n";
-          if (parsed.analysis.skillReason) aiText += "💡 解题技巧：\n" + parsed.analysis.skillReason;
-        }
-        // 兜底：如果 analysis 缺失或为空，把 AI 原始返回粘过去
-        if (!aiText && raw){
-          aiText = "（AI 返回了内容但没按 JSON 格式，以下是原始返回）\n\n" + raw;
-        }
-        if (aiText && manualBox){ manualBox.value = aiText; }
-
-        status.innerHTML = `<span style="color:var(--success);">✅ 全部填入完成！检查一下题目文字和答案是否正确，然后点保存。</span>`;
-        UI.toast("AI 看图解析完成！","success",2500);
-      }
-    } catch(e) {
-      console.error("Vision AI error:", e);
-      status.innerHTML = `<div style="color:#cf1322;font-size:13px;">❌ 调用失败：${UI.escapeHtml(e.message||"")}</div>`;
-      UI.toast("AI 看图解析失败："+(e.message||""),"error",4000);
-    } finally {
-      if (btn){ btn.disabled = false; btn.textContent = "🖼️ AI 看图一键解析（需要 API Key）"; }
-    }
-  }
-
-  // === OCR 图片文字识别 ===
-  let tesseractLoader = null;
-  async function loadTesseract(){
-    if (tesseractLoader) return tesseractLoader;
-    tesseractLoader = new Promise((resolve,reject)=>{
-      if (window.Tesseract){ resolve(window.Tesseract); return; }
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js";
-      s.onload = ()=>resolve(window.Tesseract);
-      s.onerror = ()=>reject(new Error("Tesseract.js 加载失败，请检查网络"));
-      document.head.appendChild(s);
-    });
-    return tesseractLoader;
-  }
-  async function runOCR(){
-    if (!addState.image){ UI.toast("请先上传图片","warn"); return; }
-    const status = $("#ocr-status");
-    const btn = document.querySelector('[data-act="ocr-extract"]');
-    if (btn) btn.disabled = true;
-    try {
-      status.innerText = "正在加载 OCR 引擎…（首次需下载约 2MB）";
-      const Tesseract = await loadTesseract();
-      status.innerText = "正在识别图片文字…（中文识别需 10-30 秒）";
-      const result = await Tesseract.recognize(addState.image, "chi_sim+eng", {
-        logger: m => {
-          if (m.status === "recognizing text"){
-            status.innerText = `正在识别… ${Math.round(m.progress*100)}%`;
-          } else if (m.status === "loading tesseract core"){
-            status.innerText = `加载识别引擎… ${Math.round(m.progress*100)}%`;
-          } else if (m.status === "loading language traineddata"){
-            status.innerText = `加载中文语言包… ${Math.round(m.progress*100)}%`;
-          }
-        }
-      });
-      const text = (result?.data?.text || "").replace(/\n{3,}/g, "\n\n").trim();
-      if (!text){ status.innerText = "⚠️ 未能识别出文字，请确认图片清晰度"; return; }
-      const ta = $("#q-text");
-      const existing = (ta.value||"").trim();
-      ta.value = existing ? existing + "\n\n" + text : text;
-      addState.text = ta.value;
-      status.innerHTML = `✅ 识别完成！<span style="color:var(--success);">${text.length}</span> 字已填入题目框`;
-      UI.toast("OCR 识别成功！","success");
-      runAnalysis();
-      triggerAI();
-    } catch(e) {
-      status.innerText = "❌ 识别失败：" + (e.message||"未知错误") + "（可尝试上传更清晰的图片，或直接手动输入文字）";
-      UI.toast("OCR 失败："+(e.message||""),"error");
-    } finally {
-      if (btn) btn.disabled = false;
-    }
-  }
-  function runAnalysis(){
-    const text = addState.text.trim();
-    const out = $("#analysis-out");
-    if (!text){ out.innerHTML = `<p class="muted" style="font-size:13px;">输入或粘贴题目后，这里会出现自动判别结果。</p>`; return; }
-    const result = Analyzer.analyze(text); addState.lastAnalysis = result;
-    out.innerHTML = renderAnalysisPreview(result);
-    if (!addState.applied && result.module){
-      addState.module = result.module; addState.subtype = result.subtype;
-      const selM = $("#m-module"); if (selM) selM.value = result.module;
-      const selS = $("#m-subtype"); if (selS) selS.innerHTML = UI.subtypeOptions(result.module, result.subtype);
-      addState.applied = true; refreshPits(result.pits);
-    }
-  }
-  function renderAnalysisPreview(r){
-    if (r.unknown) return `<div class="analysis-box" style="border-color:var(--warn);"><div class="ab-row"><span class="ab-label">判别</span><span class="tag tag-muted">未能自动识别</span></div><div class="reasoning">${UI.escapeHtml(r.reasoning)}</div></div>`;
-    const mod = MODULES[r.module]; const sub = r.subtype ? SUBTYPE_MAP[r.subtype] : null;
-    const confBar = `<div style="height:6px;background:var(--bg-soft);border-radius:3px;margin-top:8px;overflow:hidden;"><div style="width:${r.confidence}%;height:100%;background:var(--primary);"></div></div>`;
-
-    // --- 错题拆解详细展示 ---
-    let breakdown = "";
-    if (sub) {
-      // 考点
-      breakdown += `<div style="margin-top:12px;padding:10px 12px;background:rgba(79,156,249,.08);border-left:3px solid var(--primary);border-radius:0 8px 8px 0;"><b style="color:var(--primary);font-size:12px;">📌 考点拆解</b><div style="margin-top:4px;font-size:13px;color:var(--text-dim);line-height:1.7;">${UI.escapeHtml(sub.logic)}</div></div>`;
-      // 踩坑预警
-      breakdown += `<div style="margin-top:10px;"><b style="color:var(--accent);font-size:12px;">⚠️ 高频踩坑预警</b>`;
-      sub.pits.forEach((p,i)=>{
-        breakdown += `<div style="margin-top:4px;padding:6px 10px;background:rgba(255,181,71,.06);border-left:2px solid var(--accent);border-radius:0 6px 6px 0;font-size:12px;color:var(--text-dim);">${i+1}. ${UI.escapeHtml(p)}</div>`;
-      });
-      breakdown += `</div>`;
-      // 举一反三
-      const moduleHints = {
-        speech: "遇到言语题先抓关联词（但/因此/可见），主旨题选'全面概括'不选'片面细节'；逻辑填空先看逻辑关系再辨析词义。",
-        judge: "图形推理先看数量（点线面）再看位置；定义判断逐要件比对；逻辑判断先找论点再看削弱/加强方向。",
-        data: "资料分析先看问题再找数据，增长率=（现期-基期）/基期；比重变化看部分率vs整体率；综合题先验易排除项。",
-        quant: "数学运算优先代入排除/特值法；行程分清相遇追及；排列组合A有序C无序；概率善用对立事件。",
-        common: "常识题优先排除绝对化表述（所有/一定/唯一）；时政记关键词；法律区分应当vs可以。"
-      };
-      const hint = moduleHints[r.module] || "";
-      if (hint) {
-        breakdown += `<div style="margin-top:10px;padding:10px 12px;background:rgba(79,209,165,.08);border-radius:8px;font-size:12px;color:var(--text-dim);line-height:1.7;">💡 <b style="color:var(--success);">举一反三</b>：${UI.escapeHtml(hint)}</div>`;
-      }
-    } else {
-      // 仅模块级别
-      const modHints = {
-        speech: "言语理解核心：抓关键词（转折/递进/因果关联词后是重点）、辨析近义词侧重点、区分主旨vs细节。",
-        judge: "判断推理核心：图形看规律（数量+位置）、定义拆要件逐一对比、类比看关系+二级辨析、逻辑找论证结构。",
-        data: "资料分析核心：先看问题再找材料、增长率/比重/倍数公式记牢、综合题优先排除易判选项。",
-        quant: "数量关系核心：优先代入排除/特值法、行程工程套用模型、排列组合注意有序/无序。",
-        common: "常识判断核心：绝对化表述优先排除、时政记关键词、法律区分应当/可以、经济记易混概念。"
-      };
-      breakdown += `<div style="margin-top:12px;padding:10px 12px;background:rgba(79,156,249,.08);border-left:3px solid var(--primary);border-radius:0 8px 8px 0;"><b style="color:var(--primary);font-size:12px;">📌 模块备考重点</b><div style="margin-top:4px;font-size:13px;color:var(--text-dim);line-height:1.7;">${UI.escapeHtml(modHints[r.module]||"")}</div><div class="muted" style="font-size:11px;margin-top:6px;">💡 建议手动选择具体题型，获取更精准的拆解</div></div>`;
-    }
-
-    return `<div class="analysis-box"><div class="ab-row"><span class="ab-label">模块</span>${UI.moduleTag(r.module)}${sub?`<span class="ab-label" style="margin-left:10px;">题型</span><span class="tag tag-muted">${UI.escapeHtml(sub.name)}</span>`:""}<span class="confidence" style="margin-left:auto;">置信度 ${r.confidence}%</span></div>${confBar}<div class="reasoning">${UI.escapeHtml(r.reasoning)}</div>${breakdown}</div>`;
-  }
-  /* AI 拆解预览渲染 */
-  function renderAIPreview(exp) {
-    if (!exp) return `<div class="analysis-box" style="border-color:var(--warn);"><div class="ab-label" style="color:var(--warn);">⚠️ 无法自动拆解，请先确认题型模块</div></div>`;
-    const hasApiKey = !!localStorage.getItem("xc_api_key");
-    const manualAnalysis = addState.manualAnalysis || "";
-    return `
-      <div class="analysis-box" style="border-color:var(--primary);">
-        <div class="ab-row"><span class="ab-label" style="color:var(--primary);">🤖 AI 深度拆解</span><span class="tag tag-muted">选择一种方式</span></div>
-        <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="btn btn-sm" data-act="call-ai" style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;padding:10px 16px;font-size:14px;">🔗 ${hasApiKey?'调用联网 AI 解析':'设置 API Key + 联网解析'}</button>
-          <button class="btn btn-sm" data-act="copy-for-ai" style="background:var(--bg-soft);color:var(--text);padding:10px 16px;font-size:14px;">📋 复制题目给 AI 助手（粘贴给我）</button>
-        </div>
-        ${hasApiKey?`<div style="margin-top:6px;font-size:11px;color:var(--text-mute);">💡 当前用的是永久免费的文字模型 DeepSeek-R1-Qwen-7B <a href="#" data-act="reset-api" style="color:var(--primary);margin-left:6px;">⚙️ 修改/重置API Key</a></div>`:""}
-        <div id="ai-online-result" style="display:none;margin-top:14px;"></div>
-
-        <div style="margin-top:16px;padding-top:14px;border-top:1px dashed var(--border);">
-          <div class="section-label" style="margin:0 0 8px;">✏️ 手动粘贴 AI 解析（自己粘贴后保存）</div>
-          <textarea id="manual-ai-analysis" placeholder="把 AI 助手给你的完整解析粘贴到这里，保存后永久留存…&#10;&#10;✅ 正确选项 A 的核心逻辑：&#10;❌ 错误选项陷阱拆解：&#10;💡 解题技巧：&#10;📝 我的错因针对性分析：" style="width:100%;min-height:140px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;line-height:1.7;resize:vertical;">${UI.escapeHtml(manualAnalysis)}</textarea>
-          <div style="margin-top:6px;font-size:11px;color:var(--text-mute);">💡 用了这个功能，保存后错题本和详情页都会显示你的 AI 解析</div>
-        </div>
-      </div>`;
-  }
-
-  // === 联网 AI 调用 ===
-  function callOnlineAI(){
-    const key = localStorage.getItem("xc_api_key");
-    const endpoint = localStorage.getItem("xc_api_endpoint") || "https://api.siliconflow.cn/v1/chat/completions";
-    const freeModels = ["deepseek-ai/DeepSeek-R1-Distill-Qwen-7B","THUDM/GLM-4-9B-0414","deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"];
-    let model = localStorage.getItem("xc_api_model") || "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B";
-    if (!freeModels.includes(model)) model = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B";
-    const apiBody = `
-      <div style="padding:8px 0;">
-        ${key?`<p style="margin:0 0 8px;font-size:12px;color:var(--success);">✅ 已存 API Key（${key.slice(0,6)}...${key.slice(-4)}），可直接调用，或换一个</p>`:""}
-        <p class="muted" style="margin:0 0 12px;font-size:13px;">支持任何兼容 OpenAI 的 API（硅基流动、阿里云百炼、智谱 AI 等）。<br>推荐用 <a href="https://cloud.siliconflow.cn/" target="_blank" style="color:var(--primary);">硅基流动</a>（有完全免费的文字模型）。</p>
-        <label style="font-size:13px;color:var(--text-dim);">API Key</label>
-        <input id="api-key-input" placeholder="sk-xxxxxx" value="${key||""}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin:4px 0 10px;" />
-        <label style="font-size:13px;color:var(--text-dim);">API 地址（默认硅基流动）</label>
-        <input id="api-endpoint-input" value="${endpoint}" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin:4px 0 10px;font-size:12px;" />
-        <label style="font-size:13px;color:var(--text-dim);">文字模型（拆解题目用）</label>
-        <select id="api-model-input" style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin:4px 0 6px;font-size:12px;background:var(--bg-soft);color:var(--text);" onchange="document.getElementById('warn-pay').style.display = this.value.startsWith('💰')?'':'none'">
-          ${(()=>{ const cur = model; const opts = [
-            {v:"deepseek-ai/DeepSeek-R1-Distill-Qwen-7B", l:"🆓 DeepSeek-R1-Qwen-7B（免费，首选）"},
-            {v:"THUDM/GLM-4-9B-0414", l:"🆓 GLM-4-9B（免费）"},
-            {v:"deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", l:"🆓 DeepSeek-R1-Qwen-1.5B（免费，轻量）"},
-            {v:"Qwen/Qwen2.5-7B-Instruct", l:"💰 Qwen2.5-7B（约 ¥0.02/次，扣费）"},
-            {v:"deepseek-ai/DeepSeek-V2", l:"💰 DeepSeek-V2（约 ¥0.05/次，扣费）"},
-          ]; return opts.map(o=>`<option value="${o.v}" ${o.v===cur?'selected':''}>${o.l}</option>`).join(""); })()}
-        </select>
-        <div id="warn-pay" style="display:${model.startsWith('💰')?'':'none'};background:#fff1f0;border:1px solid #ffa39e;border-radius:6px;padding:8px 12px;margin:4px 0;font-size:12px;color:#cf1322;">⚠️ 你选的是<strong>付费模型</strong>，每次调 API 会花钱！<br>建议换成上面的 🆓 免费模型，拆解行测题完全够用。</div>
-        <p class="muted" style="margin:2px 0 0;font-size:11px;">💡 纯文字拆解用免费模型就行，不用花钱。图片解析才需要视觉模型。</p>
-      </div>`;
-    const apiFoot = `<button class="btn" data-act="ai-save-cancel">取消</button><button class="btn btn-primary" data-act="ai-save-ok">保存并调用</button>`;
-    UI.modal({ title:"🔑 AI 联网解析设置", bodyHTML: apiBody, footerHTML: apiFoot });
-  }
-
-  async function doCallOnlineAI(){
-    const key = localStorage.getItem("xc_api_key");
-    const endpoint = localStorage.getItem("xc_api_endpoint") || "https://api.siliconflow.cn/v1/chat/completions";
-    const model = localStorage.getItem("xc_api_model") || "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B";
-
-    const txt = addState.text.trim();
-    const my = ($("#my-ans")?.value||"").trim();
-    const ok = ($("#ok-ans")?.value||"").trim();
-    if (!ok){ UI.toast("请先填写正确答案","warn"); return; }
-
-    const resultBox = $("#ai-online-result");
-    resultBox.style.display = "";
-    resultBox.innerHTML = `<div style="text-align:center;padding:20px;color:var(--text-dim);"><div style="display:inline-block;width:20px;height:20px;border:2px solid var(--primary);border-top-color:transparent;border-radius:50%;animation:spin 0.8s linear infinite;"></div><div style="margin-top:8px;font-size:13px;">联网 AI 正在深度解析…</div></div>`;
-
-    const prompt = `你是一名专业的公务员考试行测讲师。请对下面这道错题进行深度解析。
-
-【题目】
-${txt}
-
-【我的错误答案】${my||"未填"}
-【正确答案】${ok}
-
-请按以下格式输出（用中文）：
-✅ 正确选项${ok}的核心逻辑：（为什么这个选项对？分析考点、逻辑关系、搭配、论证结构等）
-❌ 错误选项陷阱拆解：（逐个分析每个错误选项错在哪里、属于什么类型的干扰项）
-💡 解题技巧：（这类题的通用解法、快速识别捷径、避坑要点）
-📝 我的错因针对性分析：（结合"我的错误答案"分析我可能踩了什么思维误区）`;
-
-    try {
-      const resp = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type":"application/json", "Authorization":"Bearer "+key },
-        body: JSON.stringify({ model, messages:[{role:"system", content:"你是一名专业、严谨的行测讲师，擅长拆解题目逻辑、分析错因。请用中文回答，条理清晰。"}, {role:"user", content:prompt}], temperature:0.3, max_tokens:1200 })
-      });
-      if (!resp.ok){
-        const err = await resp.text();
-        let msg = err.slice(0,200);
-        try { const j = JSON.parse(err); if(j.error) msg = j.error.message || j.error; } catch(e){}
-        if (resp.status === 401) msg = "API Key 无效";
-        if (resp.status === 403) msg = "该模型没权限，请换一个免费模型（DeepSeek-R1-Qwen-7B）";
-        if (resp.status === 402) msg = "API 余额不足，请充值";
-        throw new Error(`HTTP ${resp.status}：${msg}`);
-      }
-      const data = await resp.json();
-      const content = (data.choices?.[0]?.message?.content) || "（AI 未返回内容）";
-      resultBox.innerHTML = `<div style="background:linear-gradient(135deg,rgba(102,126,234,0.08),rgba(118,75,162,0.08));border:1px solid rgba(102,126,234,0.3);border-radius:8px;padding:14px;white-space:pre-wrap;font-size:13px;line-height:1.8;">${UI.escapeHtml(content)}</div>`;
-      // 自动粘贴到手动框
-      const manualBox = $("#manual-ai-analysis");
-      if (manualBox && !manualBox.value.trim()) manualBox.value = content;
-      // 自动保存
-      if (Store.list && addState.text.trim()){
-        const records = Store.list();
-        const latest = records.sort((a,b)=>b.createdAt-a.createdAt)[0];
-        if (latest && latest.text === addState.text.trim()){
-          latest.aiOnlineAnalysis = content;
-          Store.update(latest.id, latest);
-        }
-      }
-    } catch(e) {
-      resultBox.innerHTML = `<div style="background:#fff1f0;border:1px solid #ffa39e;border-radius:8px;padding:12px;font-size:13px;color:#cf1322;">❌ 联网调用失败：${UI.escapeHtml(e.message)}<br><br><span style="color:var(--text-dim);">💡 建议点 ⚙️ 修改/重置API Key 重新设置，选免费模型 DeepSeek-R1-Qwen-7B。</span></div>`;
-    }
+    box.innerHTML = `<div style="margin-top:10px;"><img src="${addState.image}" style="max-width:100%;border-radius:8px;" /><button data-act="remove-img" style="display:block;margin-top:6px;padding:6px 12px;border-radius:6px;background:#ff4d4f;color:#fff;border:none;cursor:pointer;font-size:12px;">移除截图</button></div>`;
   }
 
   function copyForAI(){
     const txt = addState.text.trim();
     const my = ($("#my-ans")?.value||"").trim();
     const ok = ($("#ok-ans")?.value||"").trim();
-    const mod = addState.module ? MODULES[addState.module].name : "行测";
-    const sub = addState.subtype && SUBTYPE_MAP[addState.subtype] ? SUBTYPE_MAP[addState.subtype].name : "";
-    const prompt = `你是一名专业的公务员考试${mod}讲师${sub?`，擅长${sub}`:""}。请对下面这道错题进行深度解析。
+    if (!txt){ UI.toast("请先填写题目文字","warn"); return; }
+    const prompt = `你是一名专业的公务员考试行测讲师。请对下面这道错题进行深度解析。
 
 【题目】
 ${txt}
@@ -1307,217 +444,158 @@ ${txt}
 【正确答案】${ok||"未填"}
 
 请按以下格式输出（用中文）：
-✅ 正确选项${ok||"?"}的核心逻辑：
-❌ 错误选项陷阱拆解：
-💡 解题技巧：
-📝 我的错因针对性分析：`;
-    navigator.clipboard.writeText(prompt).then(()=>{ UI.toast("已复制！去粘贴给 AI 助手吧 📋","success",2000); }).catch(()=>{ UI.toast("复制失败，请手动复制","error"); });
+✅ 正确选项${ok}的核心逻辑：（为什么这个选项对？分析考点、逻辑关系、搭配、论证结构等）
+❌ 错误选项陷阱拆解：（逐个分析每个错误选项错在哪里、属于什么类型的干扰项）
+💡 解题技巧：（这类题的通用解法、快速识别捷径、避坑要点）
+📝 我的错因针对性分析：（结合"我的错误答案"分析我可能踩了什么思维误区）`;
+    navigator.clipboard.writeText(prompt).then(()=>{ UI.toast("已复制到剪贴板 ✅","success",2000); }).catch(()=>{
+      UI.modal({ title:"📋 复制内容（手动复制）", bodyHTML:`<textarea readonly style="width:100%;height:220px;padding:10px;border:1px solid var(--border);border-radius:6px;font-size:12px;">${UI.escapeHtml(prompt)}</textarea>`, footerHTML:"" });
+    });
   }
 
-  function refreshPits(forcePits){
-    const box = $("#pits-box"); if (!box) return;
-    const preset = Analyzer.getPreset(addState.module, addState.subtype);
-    const pits = forcePits && forcePits.length ? forcePits : preset.pits;
-    if (!pits.length){ box.innerHTML = `<p class="muted" style="font-size:12px;">该模块/题型暂无预设踩坑，可在保存后于反思中补充。</p>`; return; }
-    box.innerHTML = pits.map(p=>`<label style="display:flex;gap:8px;align-items:flex-start;padding:8px 10px;background:var(--bg-soft);border-radius:6px;margin-bottom:6px;cursor:pointer;font-size:13px;color:var(--text-dim);"><input type="checkbox" class="pit-cb" data-pit="${UI.escapeHtml(p)}" checked style="margin-top:2px;width:auto;" /><span>${UI.escapeHtml(p)}</span></label>`).join("");
-  }
   function saveRecord(){
     const text = addState.text.trim();
-    if (!text && !addState.image){ UI.toast("请至少输入题目文字或上传截图","warn"); return; }
-    if (!addState.module){ UI.toast("请选择所属模块（或先粘贴题目让系统识别）","warn"); return; }
-    const pits = $$(".pit-cb:checked").map(cb=>cb.dataset.pit);
-    const manualAi = ($("#manual-ai-analysis")?.value||"").trim();
-    const record = { text, image:addState.image, module:addState.module, subtype:addState.subtype, analysis:addState.lastAnalysis||null, pits, myAnswer:($("#my-ans")?.value||"").trim(), correctAnswer:($("#ok-ans")?.value||"").trim(), note:($("#note")?.value||"").trim(), manualAiAnalysis: manualAi, tags:[] };
-    try { Store.add(record); UI.toast("已保存到错题本","success"); addState = resetAddState(); navigate("#/list"); }
-    catch(e){ UI.toast(e.message||"保存失败","error",4000); }
+    const module = ($("#m-module")?.value||"").trim();
+    const my = ($("#my-ans")?.value||"").trim();
+    const ok = ($("#ok-ans")?.value||"").trim();
+    const note = ($("#note")?.value||"").trim();
+    const analysis = ($("#ai-analysis")?.value||"").trim();
+    if (!text){ UI.toast("请填写题目文字","warn"); return; }
+    if (!module){ UI.toast("请选择所属模块","warn"); return; }
+    Store.add({ text, module, subtype: ($("#m-subtype")?.value||"").trim(), myAnswer:my, correctAnswer:ok, note, analysis, image:addState.image });
+    UI.toast("已保存到错题本 ✅","success",1800);
+    addState = { text:"", image:null, module:null, subtype:null };
+    navigate("#/list");
   }
 
-  let filter = { module:"", keyword:"" };
   function renderList(){
-    const page = $("#page"); const all = Store.getAll();
-    page.innerHTML = `<div class="page-head"><h1>错题本</h1><p>共 ${all.length} 道错题。可按模块筛选、关键词搜索，点击查看与修正。</p></div>
-      <div class="card"><div class="grid grid-3" style="align-items:end;">
-        <div class="form-row" style="margin:0;"><label>按模块筛选</label><select id="f-module"><option value="">全部模块</option>${Object.values(MODULES).map(m=>`<option value="${m.key}" ${filter.module===m.key?"selected":""}>${m.icon} ${m.name}</option>`).join("")}</select></div>
-        <div class="form-row" style="margin:0;"><label>关键词搜索</label><input id="f-kw" type="text" placeholder="搜索题文 / 笔记" value="${UI.escapeHtml(filter.keyword)}" /></div>
-        <div class="form-row" style="margin:0;"><label>&nbsp;</label><button class="btn" data-act="clear-filter" style="width:100%;">重置筛选</button></div>
-      </div></div><div id="q-list" class="mt-12"></div>`;
-    $("#f-module").addEventListener("change", e=>{ filter.module=e.target.value; renderListBody(); });
-    $("#f-kw").addEventListener("input", e=>{ filter.keyword=e.target.value; clearTimeout(analyzeTimer); analyzeTimer=setTimeout(renderListBody,200); });
-    page.addEventListener("click", e=>{
-      if (e.target.closest('[data-act="clear-filter"]')){ filter={module:"",keyword:""}; renderList(); }
-      const card = e.target.closest(".q-item");
-      if (card && !e.target.closest(".q-actions")) openDetail(card.dataset.id);
-      const del = e.target.closest('[data-act="del"]'); if (del){ e.stopPropagation(); askDelete(del.dataset.id); }
-    });
+    $("#page").innerHTML = `
+      <div class="page-head"><h1>错题本</h1><p>点击卡片查看详情，可编辑、删除、补充 AI 解析。</p></div>
+      <div class="card">
+        <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+          <select id="filter-module" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-soft);color:var(--text);">
+            <option value="">全部模块</option>
+            ${MODULES.map(m=>`<option value="${m.id}">${m.name}</option>`).join("")}
+          </select>
+          <input id="filter-search" placeholder="搜索题干/笔记关键词..." style="flex:1;min-width:180px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg-soft);color:var(--text);" />
+        </div>
+        <div id="list-body"></div>
+      </div>`;
     renderListBody();
+    $("#filter-module").addEventListener("change", renderListBody);
+    let _t; $("#filter-search").addEventListener("input", ()=>{ clearTimeout(_t); _t = setTimeout(renderListBody, 300); });
   }
+
   function renderListBody(){
-    const box = $("#q-list"); let list = Store.getAll();
-    if (filter.module) list = list.filter(r=>r.module===filter.module);
-    if (filter.keyword.trim()){ const kw = filter.keyword.trim().toLowerCase(); list = list.filter(r=>(r.text||"").toLowerCase().includes(kw) || (r.note||"").toLowerCase().includes(kw)); }
-    if (!list.length){ box.innerHTML = `<div class="empty"><div class="em-icon">📭</div><h3>暂无错题</h3><p>${Store.getAll().length?"当前筛选条件下没有错题":"去录入第一道错题吧"} <a href="#/add">前往录入</a></p></div>`; return; }
-    box.innerHTML = `<div class="q-list">` + list.map(renderQCard).join("") + `</div>`;
+    const modF = $("#filter-module")?.value||"";
+    const schF = ($("#filter-search")?.value||"").trim().toLowerCase();
+    let list = Store.getAll();
+    if (modF) list = list.filter(r=>r.module===modF);
+    if (schF) list = list.filter(r=>(r.text||"").toLowerCase().includes(schF) || (r.note||"").toLowerCase().includes(schF) || (r.analysis||"").toLowerCase().includes(schF));
+    const body = $("#list-body"); if (!body) return;
+    if (!list.length){ body.innerHTML = `<div style="text-align:center;padding:40px;color:var(--text-dim);">暂无错题记录</div>`; return; }
+    body.innerHTML = list.map(r=>`
+      <div data-item-id="${r.id}" style="padding:14px;border:1px solid var(--border);border-radius:8px;margin-bottom:10px;cursor:pointer;transition:all .15s;" onmouseover="this.style.borderColor='var(--primary)';this.style.background='var(--bg-soft)'" onmouseout="this.style.borderColor='var(--border)';this.style.background=''">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+          <div style="flex:1;min-width:0;">
+            <div style="margin-bottom:6px;">${UI.moduleTag(r.module)} ${UI.subtypeTag(r.subtype)} <span style="color:var(--text-dim);font-size:11px;margin-left:6px;">${UI.timeAgo(r.createdAt)}</span></div>
+            <div style="font-size:14px;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${UI.escapeHtml(r.text)}</div>
+            <div style="margin-top:8px;display:flex;gap:12px;font-size:13px;flex-wrap:wrap;">
+              ${r.myAnswer?`<span style="color:#ff4d4f;">❌ 你选：${UI.escapeHtml(r.myAnswer)}</span>`:""}
+              ${r.correctAnswer?`<span style="color:#10b981;">✅ 正解：${UI.escapeHtml(r.correctAnswer)}</span>`:""}
+              ${r.analysis?`<span style="color:var(--primary);">🤖 有AI解析</span>`:""}
+            </div>
+          </div>
+          ${r.image?`<img src="${r.image}" style="width:60px;height:60px;object-fit:cover;border-radius:6px;flex-shrink:0;" />`:""}
+        </div>
+      </div>`).join("");
+    body.querySelectorAll("[data-item-id]").forEach(el=>{ el.addEventListener("click", ()=> openDetail(el.dataset.itemId)); });
   }
-  function renderQCard(r){
-    const thumb = r.image ? `<img src="${r.image}" alt="" />` : `<span>无图</span>`;
-    const text = r.text || "（仅有截图，无文字）";
-    return `<div class="q-item" data-id="${r.id}" style="cursor:pointer;"><div class="q-thumb">${thumb}</div><div class="q-body"><div class="q-meta">${UI.moduleTag(r.module)}${UI.subtypeTag(r.subtype)}${r.myAnswer&&r.correctAnswer?`<span class="tag tag-muted">我选 ${UI.escapeHtml(r.myAnswer)} / 正解 ${UI.escapeHtml(r.correctAnswer)}</span>`:""}</div><div class="q-text">${UI.escapeHtml(text)}</div>${r.note?`<div class="q-note">📝 ${UI.escapeHtml(r.note)}</div>`:""}</div><div class="q-actions"><span class="q-time">${UI.timeAgo(r.createdAt)}</span><button class="btn btn-sm" data-act="del" data-id="${r.id}">删除</button></div></div>`;
-  }
-  async function askDelete(id){
-    const ok = await UI.confirmDialog("确定删除这道错题吗？此操作不可撤销。",{okText:"删除",danger:true});
-    if (ok){ Store.remove(id); UI.toast("已删除","success"); renderListBody(); updateTopbarCount(); }
-  }
+
   function openDetail(id){
-    const r = Store.getById(id); if (!r){ UI.toast("记录不存在","error"); return; }
-    const bodyHTML = `<div class="detail-meta">${UI.moduleTag(r.module)}${UI.subtypeTag(r.subtype)}<span class="tag tag-muted">${UI.timeAgo(r.createdAt)}</span></div>
-      ${r.image?`<img class="detail-img" src="${r.image}" alt="错题截图" />`:""}
-      ${r.text?`<div class="detail-text">${UI.escapeHtml(r.text)}</div>`:""}
-      ${r.analysis&&r.analysis.reasoning?`<div class="section-label">自动判别</div><div class="reasoning" style="color:var(--text-dim);font-size:13px;">${UI.escapeHtml(r.analysis.reasoning)}</div>`:""}
-      <div class="section-label">修正模块 / 题型</div>
-      <div class="form-row" style="margin-bottom:10px;"><select id="d-module">${UI.moduleOptions(r.module)}</select></div>
-      <div class="form-row" style="margin-bottom:10px;"><select id="d-subtype">${UI.subtypeOptions(r.module, r.subtype)}</select></div>
-      <div class="section-label">常见踩坑（勾选符合本题的）</div>
-      <div id="d-pits"></div>
-      <div class="section-label">答案与错误原因</div>
-      <div class="grid grid-2" style="margin-bottom:10px;"><input id="d-my" type="text" placeholder="我的错误答案" value="${UI.escapeHtml(r.myAnswer||"")}" /><input id="d-ok" type="text" placeholder="正确答案" value="${UI.escapeHtml(r.correctAnswer||"")}" /></div>
-      <textarea id="d-note" placeholder="我的错误原因（自己写）">${UI.escapeHtml(r.note||"")}</textarea>
-      <div class="section-label">🤖 AI 深度拆解（手动粘贴后保存）</div>
-      <textarea id="d-ai-manual" placeholder="把 AI 助手给你的完整解析粘贴到这里…&#10;✅ 正确选项的核心逻辑：&#10;❌ 错误选项陷阱拆解：&#10;💡 解题技巧：&#10;📝 我的错因针对性分析：" style="width:100%;min-height:180px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--bg-soft);color:var(--text);font-size:13px;line-height:1.7;resize:vertical;">${UI.escapeHtml(r.manualAiAnalysis||r.aiOnlineAnalysis||"")}</textarea>
-      <div style="margin-top:6px;display:flex;gap:6px;">
-        <button class="btn btn-sm" data-act="detail-call-ai" style="background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;border:none;">🔗 联网 AI 解析</button>
-        <button class="btn btn-sm" data-act="detail-copy-ai" style="background:var(--bg-soft);color:var(--text);">📋 复制题目给 AI 助手</button>
+    const r = Store.get(id); if (!r) return;
+    const body = `
+      <div style="margin-bottom:16px;">
+        <div style="display:flex;gap:6px;margin-bottom:10px;">${UI.moduleTag(r.module)} ${UI.subtypeTag(r.subtype)} <span style="color:var(--text-dim);font-size:11px;">${UI.timeAgo(r.createdAt)}</span></div>
+        ${r.image?`<img src="${r.image}" style="max-width:100%;border-radius:8px;margin-bottom:10px;"/>`:""}
+        <div style="padding:12px;background:var(--bg-soft);border-radius:8px;font-size:14px;line-height:1.7;white-space:pre-wrap;">${UI.escapeHtml(r.text)}</div>
       </div>
-      <div id="d-ai-online" style="display:none;margin-top:12px;"></div>`;
-    const footerHTML = `<button class="btn btn-danger" data-act="del-detail">删除</button><span style="flex:1"></span><button class="btn" data-act="close">取消</button><button class="btn btn-primary" data-act="save-detail">保存修改</button>`;
-    let cur = { module:r.module, subtype:r.subtype, pits:[...(r.pits||[])] };
-    UI.modal({ title:"错题详情 / 编辑", bodyHTML, footerHTML,
-      onMount(root, close){
-        const pitsBox = $("#d-pits", root);
-        const renderDpits = ()=>{
-          const preset = Analyzer.getPreset(cur.module, cur.subtype);
-          const all = cur.pits.length ? cur.pits : preset.pits;
-          const union = [...new Set([...all, ...preset.pits])];
-          if (!union.length){ pitsBox.innerHTML = `<p class="muted" style="font-size:12px;">该模块/题型暂无预设踩坑。</p>`; return; }
-          pitsBox.innerHTML = union.map(p=>{ const checked = cur.pits.includes(p)?"checked":""; return `<label style="display:flex;gap:8px;align-items:flex-start;padding:8px 10px;background:var(--bg-soft);border-radius:6px;margin-bottom:6px;cursor:pointer;font-size:13px;color:var(--text-dim);"><input type="checkbox" class="d-pit-cb" data-pit="${UI.escapeHtml(p)}" ${checked} style="margin-top:2px;width:auto;" /><span>${UI.escapeHtml(p)}</span></label>`; }).join("");
-        };
-        renderDpits();
-        // 联网 AI 在详情页的调用
-        root.addEventListener("click", async e=>{
-          if (e.target.closest('[data-act="detail-call-ai"]')){
-            const txt = r.text || ""; const my = $("#d-my", root).value.trim(); const ok = $("#d-ok", root).value.trim();
-            const resultBox = $("#d-ai-online", root); resultBox.style.display = "";
-            resultBox.innerHTML = `<div style="text-align:center;padding:16px;color:var(--text-dim);">⏳ 联网 AI 解析中…</div>`;
-            const key = localStorage.getItem("xc_api_key");
-            if (!key){ resultBox.innerHTML = `<div style="color:var(--warn);font-size:13px;">请先在录入页设置 API Key，或用"复制题目给 AI 助手"按钮手动粘贴给 AI 助手。</div>`; return; }
-            const endpoint = localStorage.getItem("xc_api_endpoint") || "https://api.siliconflow.cn/v1/chat/completions";
-            const model = localStorage.getItem("xc_api_model") || "Qwen/Qwen2.5-7B-Instruct";
-            const prompt = `你是一名专业的公务员考试行测讲师。请对下面这道错题进行深度解析。
-
-【题目】${txt}
-【我的错误答案】${my||"未填"}
-【正确答案】${ok}
-
-请按以下格式输出（用中文）：
-✅ 正确选项${ok||"?"}的核心逻辑：
-❌ 错误选项陷阱拆解：
-💡 解题技巧：
-📝 我的错因针对性分析：`;
-            try {
-              const resp = await fetch(endpoint, { method:"POST", headers:{ "Content-Type":"application/json","Authorization":"Bearer "+key }, body: JSON.stringify({ model, messages:[{role:"system", content:"你是一名专业、严谨的行测讲师。"},{role:"user", content:prompt}], temperature:0.3, max_tokens:1200 }) });
-              if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-              const data = await resp.json(); const content = (data.choices?.[0]?.message?.content) || "";
-              resultBox.innerHTML = `<div style="background:linear-gradient(135deg,rgba(102,126,234,0.08),rgba(118,75,162,0.08));border:1px solid rgba(102,126,234,0.3);border-radius:8px;padding:14px;white-space:pre-wrap;font-size:13px;line-height:1.8;">${UI.escapeHtml(content)}</div>`;
-              if (content){ $("#d-ai-manual", root).value = content; }
-            } catch(err){ resultBox.innerHTML = `<div style="color:#cf1322;font-size:13px;">❌ ${UI.escapeHtml(err.message)}</div>`; }
-          }
-          if (e.target.closest('[data-act="detail-copy-ai"]')){
-            const txt = r.text || ""; const my = $("#d-my", root).value.trim(); const ok = $("#d-ok", root).value.trim();
-            const mod = MODULES[r.module]?.name || "行测"; const sub = r.subtype && SUBTYPE_MAP[r.subtype] ? SUBTYPE_MAP[r.subtype].name : "";
-            const prompt = `你是一名专业的公务员考试${mod}讲师${sub?`，擅长${sub}`:""}。请对下面这道错题进行深度解析。
-
-【题目】${txt}
-【我的错误答案】${my||"未填"}
-【正确答案】${ok||"未填"}
-
-请按以下格式输出（用中文）：
-✅ 正确选项${ok||"?"}的核心逻辑：
-❌ 错误选项陷阱拆解：
-💡 解题技巧：
-📝 我的错因针对性分析：`;
-            navigator.clipboard.writeText(prompt).then(()=>UI.toast("已复制！粘贴给 AI 助手吧 📋","success")).catch(()=>UI.toast("复制失败","error"));
-          }
-          if (e.target.closest('[data-act="save-detail"]')){
-            cur.pits = $$(".d-pit-cb:checked", root).map(cb=>cb.dataset.pit);
-            const upd = { module:cur.module, subtype:cur.subtype, pits:cur.pits, myAnswer:$("#d-my", root).value.trim(), correctAnswer:$("#d-ok", root).value.trim(), note:$("#d-note", root).value.trim(), manualAiAnalysis: $("#d-ai-manual", root).value.trim() };
-            Store.update(r.id, upd);
-            UI.toast("已保存修改","success"); close(); renderListBody();
-          }
-          if (e.target.closest('[data-act="del-detail"]')){
-            (async()=>{ const ok = await UI.confirmDialog("确定删除这道错题？",{okText:"删除",danger:true}); if (ok){ Store.remove(r.id); UI.toast("已删除","success"); close(); renderListBody(); updateTopbarCount(); } })();
+      <div style="display:flex;gap:12px;margin-bottom:16px;font-size:14px;">
+        ${r.myAnswer?`<div style="flex:1;padding:10px;background:#fff1f0;border:1px solid #ffa39e;border-radius:6px;color:#cf1322;">❌ 你选：<strong>${UI.escapeHtml(r.myAnswer)}</strong></div>`:""}
+        ${r.correctAnswer?`<div style="flex:1;padding:10px;background:#f6ffed;border:1px solid #b7eb8f;border-radius:6px;color:#389e0d;">✅ 正解：<strong>${UI.escapeHtml(r.correctAnswer)}</strong></div>`:""}
+      </div>
+      ${r.note?`<div style="margin-bottom:16px;"><div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">📝 我的错误原因</div><div style="padding:10px;background:var(--bg-soft);border-radius:6px;font-size:13px;white-space:pre-wrap;">${UI.escapeHtml(r.note)}</div></div>`:""}
+      ${r.analysis?`<div style="margin-bottom:16px;"><div style="font-size:12px;color:var(--text-dim);margin-bottom:4px;">🤖 AI 深度解析</div><div style="padding:12px;background:linear-gradient(135deg,rgba(102,126,234,0.08),rgba(118,75,162,0.08));border:1px solid rgba(102,126,234,0.3);border-radius:8px;font-size:13px;line-height:1.8;white-space:pre-wrap;">${UI.escapeHtml(r.analysis)}</div></div>`:"<div style='margin-bottom:16px;padding:10px;background:var(--bg-soft);border-radius:6px;color:var(--text-dim);font-size:12px;'>💡 还没有 AI 解析，去录入页点「📋 复制题目给 AI 助手」拿到解析后在下方粘贴</div>"}
+      <div style="border-top:1px solid var(--border);padding-top:12px;">
+        <div class="form-row"><label>我的错误答案</label><input id="d-my" type="text" value="${UI.escapeHtml(r.myAnswer||"")}" /></div>
+        <div class="form-row"><label>正确答案</label><input id="d-ok" type="text" value="${UI.escapeHtml(r.correctAnswer||"")}" /></div>
+        <div class="form-row"><label>我的错误原因</label><textarea id="d-note">${UI.escapeHtml(r.note||"")}</textarea></div>
+        <div class="form-row"><label>AI 深度解析（粘贴新的）</label><textarea id="d-analysis" style="min-height:120px;">${UI.escapeHtml(r.analysis||"")}</textarea></div>
+      </div>`;
+    UI.modal({ title:"📖 错题详情", bodyHTML: body, footerHTML:`<button class="btn" data-del>删除</button><button class="btn btn-primary" data-save>保存修改</button>`,
+      onMount(root) {
+        root.addEventListener("click", e=>{
+          if (e.target.matches("[data-del]")){ if(confirm("确认删除这道错题？")){ Store.remove(r.id); UI.toast("已删除","success"); root.querySelector("[data-close-modal]")?.click(); renderList(); } }
+          if (e.target.matches("[data-save]")){
+            Store.update(r.id, {
+              myAnswer: ($("#d-my",root).value||"").trim(),
+              correctAnswer: ($("#d-ok",root).value||"").trim(),
+              note: ($("#d-note",root).value||"").trim(),
+              analysis: ($("#d-analysis",root).value||"").trim()
+            });
+            UI.toast("已保存修改","success"); root.querySelector("[data-close-modal]")?.click(); renderList();
           }
         });
       }
     });
   }
-  function updateTopbarCount(){ const el = $(".topbar .stat-mini"); if (el) el.textContent = "已记录 " + Store.getAll().length + " 题"; }
 
   function renderStats(){
-    const page = $("#page"); const s = Store.stats();
-    page.innerHTML = `<div class="page-head"><h1>分析报告</h1><p>基于你记录的 ${s.total} 道错题自动汇总，定位薄弱模块与高频踩坑。</p></div>
-      ${s.total===0?`<div class="empty"><div class="em-icon">📊</div><h3>还没有数据</h3><p>先录入几道错题，再来看分析报告 <a href="#/add">前往录入</a></p></div>`:renderStatsBody(s)}
-      <div class="card mt-12" style="margin-top:16px;"><div class="card-title"><span class="dot" style="background:var(--danger);"></span>数据管理</div><div class="row-gap"><button class="btn btn-danger" data-act="clear-all">清空全部错题</button></div><div class="hint" style="margin-top:8px;">数据仅保存在本浏览器（localStorage），清除浏览器数据将丢失，请谨慎操作。</div></div>`;
-    page.addEventListener("click", async e=>{
-      if (e.target.closest('[data-act="clear-all"]')){ const ok = await UI.confirmDialog("确定清空全部错题记录？此操作不可撤销！",{okText:"全部清空",danger:true}); if (ok){ Store.clearAll(); UI.toast("已清空","success"); render(); } }
-    });
-  }
-  function renderStatsBody(s){
-    const maxMod = Math.max(1, ...Object.values(s.moduleCounts));
-    const topPit = s.pitRank[0];
-    const trendMax = Math.max(1, ...s.trend.map(t=>t.count));
-    const totalAnswered = s.answeredWrong;
-    const moduleBars = s.moduleRank.map(m=>`<div class="bar-row"><div class="bl-name">${m.icon} ${m.short}</div><div class="bar-track"><div class="bar-fill" style="width:${(m.count/maxMod*100).toFixed(0)}%;background:${m.color};"></div></div><div class="bl-val">${m.count} 题</div></div>`).join("");
-    const subRows = Object.entries(s.subtypeCounts).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([t,c])=>{ const st = SUBTYPE_MAP[t]; if (!st) return ""; return `<div class="pit-rank-item"><div class="pit-rank-num">${c}</div><div class="pit-rank-body"><div class="prb-head">${UI.moduleTag(st.module,false)} <span style="font-size:13px;">${UI.escapeHtml(st.name)}</span></div></div></div>`; }).join("");
-    const pitRank = s.pitRank.slice(0,6).map((p,i)=>`<div class="pit-rank-item ${i===0?"top1":i===1?"top2":i===2?"top3":""}"><div class="pit-rank-num">${i+1}</div><div class="pit-rank-body"><div class="prb-head">${UI.moduleTag(p.module,false)} ${p.subtypeName?`<span class="tag tag-muted">${UI.escapeHtml(p.subtypeName)}</span>`:""} <span class="prb-count">×${p.count}</span></div><div class="prb-pit">${UI.escapeHtml(p.pit)}</div></div></div>`).join("") || `<p class="muted" style="font-size:13px;">暂无踩坑数据（保存错题时勾选的踩坑会在此统计）。</p>`;
-    const trendBars = s.trend.map(t=>`<div class="trend-bar" style="height:${(t.count/trendMax*100).toFixed(0)}%;">${t.count?`<div class="tb-tip">${t.count}</div>`:""}</div>`).join("");
-    const trendX = s.trend.map(t=>`<span>${t.label}</span>`).join("");
-    const advice = buildAdvice(s);
-    return `<div class="stat-cards">
-        <div class="stat-card"><div class="sc-label">错题总数</div><div class="sc-value">${s.total}</div><div class="sc-sub">${totalAnswered?`已标注 ${totalAnswered} 题错误答案`:"建议补充答案便于复盘"}</div></div>
-        <div class="stat-card"><div class="sc-label">错最多模块</div><div class="sc-value" style="color:${s.byModuleTop?s.byModuleTop.color:"var(--text)"};">${s.byModuleTop?s.byModuleTop.short:"—"}</div><div class="sc-sub">${s.byModuleTop?`${s.byModuleTop.count} 题 · 占 ${(s.byModuleTop.count/s.total*100).toFixed(0)}%`:"暂无数据"}</div></div>
-        <div class="stat-card"><div class="sc-label">最高频踩坑</div><div class="sc-value" style="font-size:18px;line-height:1.3;">${topPit?UI.escapeHtml(truncate(topPit.pit,14)):"—"}</div><div class="sc-sub">${topPit?`×${topPit.count} 次 · ${topPit.subtypeName}`:"暂无"}</div></div>
-        <div class="stat-card"><div class="sc-label">近14天记录</div><div class="sc-value">${s.trend.reduce((a,b)=>a+b.count,0)}</div><div class="sc-sub">${s.trend.filter(t=>t.count).length} 天有记录</div></div>
-      </div>
-      <div class="grid grid-2">
-        <div class="card"><div class="card-title"><span class="dot"></span>各模块错题分布</div>${moduleBars||`<p class="muted">暂无数据</p>`}</div>
-        <div class="card"><div class="card-title"><span class="dot"></span>近 14 天错题趋势</div><div class="trend-chart">${trendBars}</div><div class="trend-x">${trendX}</div></div>
-      </div>
-      <div class="card"><div class="card-title"><span class="dot" style="background:var(--accent);"></span>高频踩坑 Top 6</div>${pitRank}</div>
-      <div class="grid grid-2">
-        <div class="card"><div class="card-title"><span class="dot" style="background:var(--success);"></span>题型分布</div>${subRows||`<p class="muted" style="font-size:13px;">暂无题型数据。</p>`}</div>
-        <div class="card"><div class="card-title"><span class="dot" style="background:var(--primary);"></span>🎯 个性化诊断建议</div>${advice}</div>
-      </div>`;
-  }
-  function buildAdvice(s){
-    if (!s.total) return `<p class="muted">暂无数据。</p>`;
-    const top = s.byModuleTop; if (!top) return `<p class="muted">暂无模块数据。</p>`;
-    const list = SUBTYPES.filter(st=>st.module===top.key);
-    const topPits = s.pitRank.filter(p=>p.module===top.key).slice(0,3);
-    let html = `<div style="font-size:13px;line-height:1.8;color:var(--text-dim);">你在 <b style="color:${top.color};">${top.name}</b> 模块错题最多（${top.count} 题，占 ${(top.count/s.total*100).toFixed(0)}%），建议优先突破。该模块含 ${list.length} 类题型，重点题型与常见坑如下：</div><div class="mt-12">`;
-    list.forEach(st=>{ const cnt = s.subtypeCounts[st.type]||0; html += `<div style="margin-bottom:10px;"><div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px;"><b>${UI.escapeHtml(st.name)}</b><span class="muted">${cnt} 题</span></div><ul style="margin:0;padding-left:18px;font-size:12px;color:var(--text-dim);">${st.pits.slice(0,3).map(p=>`<li>${UI.escapeHtml(p)}</li>`).join("")}</ul></div>`; });
-    html += `</div>`;
-    if (topPits.length){ html += `<div class="section-label" style="margin-top:8px;">你在该模块最常踩的坑</div><ul style="margin:0;padding-left:18px;font-size:12px;color:var(--accent);">`; topPits.forEach(p=>html+=`<li>×${p.count} · ${UI.escapeHtml(p.pit)}</li>`); html += `</ul>`; }
-    return html;
-  }
-  function truncate(s,n){ return s.length>n?s.slice(0,n)+"…":s; }
+    const records = Store.getAll();
+    const byModule = {}; const bySubtype = {};
+    records.forEach(r=>{ byModule[r.module] = (byModule[r.module]||0)+1; if (r.subtype) bySubtype[r.subtype] = (bySubtype[r.subtype]||0)+1; });
+    const topM = Object.entries(byModule).sort((a,b)=>b[1]-a[1])[0];
+    const topS = Object.entries(bySubtype).sort((a,b)=>b[1]-a[1])[0];
 
-  function start(){
-    window.addEventListener("hashchange", ()=>{ render(); window.scrollTo(0,0); });
-    render();
+    $("#page").innerHTML = `
+      <div class="page-head"><h1>分析报告</h1><p>汇总你的错题分布和高频薄弱点。</p></div>
+      ${records.length===0 ? `<div class="card" style="text-align:center;padding:40px;color:var(--text-dim);">还没有错题记录，去录入页添加吧</div>` : `
+      <div class="grid grid-4">
+        <div class="card" style="text-align:center;"><div style="font-size:28px;font-weight:700;color:var(--primary);">${records.length}</div><div style="color:var(--text-dim);font-size:12px;">错题总数</div></div>
+        <div class="card" style="text-align:center;">${topM?`<div style="font-size:18px;font-weight:600;">${MODULES.find(m=>m.id===topM[0])?.name}</div><div style="color:var(--text-dim);font-size:12px;">错最多模块（${topM[1]}题）</div>`:"-"}</div>
+        <div class="card" style="text-align:center;">${topS?`<div style="font-size:18px;font-weight:600;">${SUBTYPE_MAP[topS[0]]?.name||topS[0]}</div><div style="color:var(--text-dim);font-size:12px;">最高频题型（${topS[1]}题）</div>`:"-"}</div>
+        <div class="card" style="text-align:center;"><div style="font-size:28px;font-weight:700;color:#667eea;">${records.filter(r=>r.analysis).length}</div><div style="color:var(--text-dim);font-size:12px;">有AI解析</div></div>
+      </div>
+      <div class="grid grid-2" style="margin-top:16px;">
+        <div class="card">
+          <div class="card-title"><span class="dot" style="background:var(--primary);"></span>各模块错题分布</div>
+          <div style="margin-top:10px;">
+            ${MODULES.map(m=>{ const c=byModule[m.id]||0; const pct=records.length?Math.round(c/records.length*100):0; return `<div style="margin-bottom:10px;"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span>${m.name}</span><span style="color:var(--text-dim);">${c}题 · ${pct}%</span></div><div style="background:var(--bg-soft);border-radius:4px;height:10px;overflow:hidden;"><div style="height:100%;width:${pct}%;background:${m.color};border-radius:4px;"></div></div></div>`; }).join("")}
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title"><span class="dot" style="background:#667eea;"></span>高频题型 Top 10</div>
+          <div style="margin-top:10px;">
+            ${Object.entries(bySubtype).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([id,c],i)=>{ const m = MODULES.find(m=>m.subtypes.some(x=>x.id===id)); const s = SUBTYPE_MAP[id]; return `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:13px;"><span><strong style="color:var(--text-dim);margin-right:6px;">${i+1}.</strong>${m?m.name+" · ":""}${s?s.name:id}</span><span style="color:var(--primary);font-weight:600;">${c}</span></div>`; }).join("")}
+          </div>
+        </div>
+      </div>
+      <div style="text-align:center;margin-top:20px;">
+        <button style="padding:8px 20px;border-radius:6px;background:#ff4d4f;color:#fff;border:none;cursor:pointer;" onclick="if(confirm('确认清空所有错题？此操作不可恢复！')){Store.clear();UI.toast('已清空','success');render();}">🗑️ 清空全部错题</button>
+      </div>`}
+    `;
   }
-  return { start };
+
+  document.addEventListener("click", e=>{
+    const link = e.target.closest("[data-link]");
+    if (link){ e.preventDefault(); location.hash = link.dataset.link; }
+    if (e.target.matches('[data-act="save"]')) saveRecord();
+    if (e.target.matches('[data-act="copy-for-ai"]')) copyForAI();
+    if (e.target.matches('[data-act="remove-img"]')){ addState.image=null; renderImgPreview(); }
+  });
+
+  window.addEventListener("hashchange", render);
+  return { render };
 })();
 
-document.addEventListener("DOMContentLoaded", App.start);
-</script>
-</body>
-</html>
+document.addEventListener("DOMContentLoaded", ()=>{ App.render(); });
